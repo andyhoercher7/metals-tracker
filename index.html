@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Metals Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f0f;color:#e8e8e8;min-height:100vh}
+:root{--gold:#f5c518;--silver:#c0c0c0;--copper:#b87333;--platinum:#e5e4e2;--palladium:#cec5b6;--surface:#1a1a1a;--surface2:#242424;--border:#333;--green:#4caf50;--red:#e55}
+#login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#0f0f0f 0%,#1a1500 100%)}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px;width:100%;max-width:400px}
+.login-box h1{font-size:1.8rem;margin-bottom:8px;color:var(--gold)}
+.login-box p{color:#888;margin-bottom:32px;font-size:.9rem}
+.form-group{margin-bottom:16px}
+.form-group label{display:block;margin-bottom:6px;font-size:.85rem;color:#aaa}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:10px 14px;background:#111;border:1px solid var(--border);border-radius:8px;color:#e8e8e8;font-size:.95rem;outline:none}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--gold)}
+.form-group textarea{resize:vertical;min-height:80px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:.9rem;font-weight:500;transition:all .15s}
+.btn-primary{background:var(--gold);color:#000;width:100%}
+.btn-primary:hover{background:#d4a800}
+.btn-secondary{background:var(--surface2);color:#e8e8e8;border:1px solid var(--border)}
+.btn-secondary:hover{background:#2e2e2e}
+.btn-danger{background:#c0392b;color:#fff}
+.btn-danger:hover{background:#a93226}
+.btn-sm{padding:6px 12px;font-size:.8rem}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+#app{display:none;flex-direction:column;min-height:100vh}
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;flex-wrap:wrap;gap:10px;position:sticky;top:0;z-index:100}
+.portfolio-total{font-size:1.6rem;font-weight:700;color:var(--gold)}
+.portfolio-gain{font-size:.82rem}
+.portfolio-gain.pos{color:var(--green)}
+.portfolio-gain.neg{color:var(--red)}
+.spacer{flex:1}
+.spot-prices{display:flex;gap:14px;flex-wrap:wrap;font-size:.78rem}
+.spot-item{display:flex;flex-direction:column;align-items:center}
+.spot-label{color:#888;font-size:.65rem;text-transform:uppercase}
+.spot-value{color:var(--gold);font-weight:600}
+.hbtns{display:flex;gap:8px;flex-wrap:wrap}
+#content{flex:1;padding:20px;max-width:1200px;margin:0 auto;width:100%}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin-bottom:22px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.card.gold::before{background:var(--gold)}
+.card.silver::before{background:var(--silver)}
+.card.copper::before{background:var(--copper)}
+.card.platinum::before{background:var(--platinum)}
+.card.palladium::before{background:var(--palladium)}
+.card h3{font-size:.72rem;text-transform:uppercase;color:#888;margin-bottom:10px}
+.card .oz{font-size:1.3rem;font-weight:700}
+.card .oz span{font-size:.72rem;color:#888}
+.stat{display:flex;justify-content:space-between;margin-top:5px;font-size:.8rem}
+.stat label{color:#888}
+.pos{color:var(--green)}
+.neg{color:var(--red)}
+.tabs{display:flex;gap:2px;margin-bottom:18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.tab{padding:8px 14px;background:none;border:none;color:#888;cursor:pointer;font-size:.86rem;border-bottom:2px solid transparent;margin-bottom:-1px;border-radius:4px 4px 0 0}
+.tab:hover{color:#e8e8e8}
+.tab.active{color:var(--gold);border-bottom-color:var(--gold)}
+.toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.search{flex:1;min-width:160px;padding:8px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:#e8e8e8;font-size:.86rem;outline:none}
+.search:focus{border-color:var(--gold)}
+.tbl-wrap{overflow-x:auto;border-radius:12px}
+table{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+th{background:var(--surface2);padding:9px 12px;text-align:left;font-size:.74rem;text-transform:uppercase;color:#888;white-space:nowrap}
+td{padding:9px 12px;border-top:1px solid var(--border);font-size:.85rem;vertical-align:middle}
+tr:hover td{background:#1e1e1e}
+.badge{display:inline-flex;padding:2px 8px;border-radius:20px;font-size:.72rem;font-weight:600;text-transform:capitalize}
+.badge.gold{background:#2a2000;color:var(--gold)}
+.badge.silver{background:#222;color:var(--silver)}
+.badge.copper{background:#200e00;color:var(--copper)}
+.badge.platinum{background:#1e1e1e;color:var(--platinum)}
+.badge.palladium{background:#1a1a1a;color:var(--palladium)}
+.acts{display:flex;gap:5px}
+.thumb{width:34px;height:34px;border-radius:6px;object-fit:cover;cursor:pointer;border:1px solid var(--border)}
+.nophoto{width:34px;height:34px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:#444;font-size:.65rem}
+.empty{text-align:center;padding:50px 20px;color:#555}
+.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:center;justify-content:center;padding:16px}
+.modal-overlay.open{display:flex}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:26px;width:100%;max-width:540px;max-height:92vh;overflow-y:auto}
+.modal.wide{max-width:680px}
+.modal h2{margin-bottom:18px;font-size:1.05rem;color:var(--gold)}
+.mgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.mgrid .full{grid-column:1/-1}
+.mfoot{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}
+.alert{padding:10px 13px;border-radius:8px;margin-bottom:14px;font-size:.85rem}
+.alert-err{background:#2a0000;border:1px solid #c00;color:#f88}
+.spinner{width:15px;height:15px;border:2px solid #333;border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:middle}
+@keyframes spin{to{transform:rotate(360deg)}}
+.price-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 13px;display:flex;justify-content:space-between;align-items:center;margin-top:7px}
+.price-card .pname{font-size:.82rem;color:#ccc}
+.price-card .pprice{font-size:.92rem;color:var(--gold);font-weight:600}
+.price-card .poz{font-size:.72rem;color:#888}
+.inv-textarea{width:100%;min-height:130px;padding:11px;background:#111;border:1px solid var(--border);border-radius:8px;color:#e8e8e8;font-size:.84rem;outline:none;resize:vertical;font-family:monospace}
+.inv-textarea:focus{border-color:var(--gold)}
+.inv-table{width:100%;border-collapse:collapse;margin-top:14px;font-size:.82rem}
+.inv-table th{background:var(--surface2);padding:7px 9px;text-align:left;color:#888;font-size:.72rem;text-transform:uppercase}
+.inv-table td{padding:7px 9px;border-top:1px solid var(--border)}
+.inv-table input,.inv-table select{width:100%;padding:3px 7px;background:#111;border:1px solid var(--border);border-radius:4px;color:#e8e8e8;font-size:.8rem}
+.photo-preview{width:100%;max-height:180px;object-fit:contain;border-radius:8px;margin-top:7px;border:1px solid var(--border)}
+.img-modal .modal{background:#000;border-color:#333;max-width:92vw}
+.img-modal img{max-width:100%;max-height:80vh;display:block;margin:0 auto}
+@media(max-width:580px){
+  .mgrid{grid-template-columns:1fr}
+  .mgrid .full{grid-column:1}
+  header{padding:10px 14px}
+  .portfolio-total{font-size:1.25rem}
+  #content{padding:10px}
+  td,th{padding:7px 9px}
+}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="login-box">
+    <h1>&#9875; Metals Tracker</h1>
+    <p>Precious metals portfolio tracker</p>
+    <div id="login-err" class="alert alert-err" style="display:none"></div>
+    <div class="form-group"><label>Email</label><input type="email" id="l-email" autocomplete="username"></div>
+    <div class="form-group"><label>Password</label><input type="password" id="l-pass" autocomplete="current-password"></div>
+    <button class="btn btn-primary" id="login-btn" onclick="doLogin()">Sign In</button>
+  </div>
+</div>
+
+<div id="app">
+  <header>
+    <div>
+      <div style="font-size:.65rem;color:#888;text-transform:uppercase">Portfolio Value</div>
+      <div class="portfolio-total" id="ptotal">$0.00</div>
+      <div class="portfolio-gain" id="pgain"></div>
+    </div>
+    <div class="spacer"></div>
+    <div class="spot-prices" id="spots"><div class="spinner"></div></div>
+    <div class="hbtns">
+      <button class="btn btn-secondary btn-sm" id="ref-btn" onclick="refreshPrices()">&#8635; Refresh Prices</button>
+      <button class="btn btn-secondary btn-sm" onclick="doLogout()">Sign Out</button>
+    </div>
+  </header>
+  <div id="content">
+    <div class="summary-grid" id="sgrid"></div>
+    <div class="tabs">
+      <button class="tab active" onclick="setTab('all',this)">All</button>
+      <button class="tab" onclick="setTab('gold',this)">Gold</button>
+      <button class="tab" onclick="setTab('silver',this)">Silver</button>
+      <button class="tab" onclick="setTab('copper',this)">Copper</button>
+      <button class="tab" onclick="setTab('platinum',this)">Platinum</button>
+      <button class="tab" onclick="setTab('palladium',this)">Palladium</button>
+    </div>
+    <div class="toolbar">
+      <input class="search" type="text" placeholder="Search product, dealer..." id="q" oninput="renderTable()">
+      <button class="btn btn-primary btn-sm" onclick="openAdd()">+ Add Entry</button>
+      <button class="btn btn-secondary btn-sm" onclick="openInv()">&#128203; Paste Invoice</button>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr>
+          <th>Photo</th><th>Date</th><th>Metal</th><th>Product</th>
+          <th>Oz</th><th>Paid</th><th>$/oz</th><th>Mkt Value</th>
+          <th>Gain/Loss</th><th>Dealer</th><th>Actions</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+      <div id="empty" class="empty" style="display:none">
+        <div style="font-size:2.5rem;margin-bottom:10px">&#129689;</div>
+        <div>No entries yet. Add your first holding!</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Entry Modal -->
+<div class="modal-overlay" id="entry-modal">
+  <div class="modal">
+    <h2 id="mtitle">Add Entry</h2>
+    <div id="merr" class="alert alert-err" style="display:none"></div>
+    <div class="mgrid">
+      <div class="form-group"><label>Date</label><input type="date" id="f-date"></div>
+      <div class="form-group"><label>Metal</label>
+        <select id="f-metal">
+          <option value="gold">Gold</option>
+          <option value="silver">Silver</option>
+          <option value="copper">Copper</option>
+          <option value="platinum">Platinum</option>
+          <option value="palladium">Palladium</option>
+        </select>
+      </div>
+      <div class="form-group full"><label>Product Name</label><input type="text" id="f-product" placeholder="e.g. 1oz Silver American Eagle 2024"></div>
+      <div class="form-group"><label>Troy Oz</label><input type="number" id="f-oz" step="0.001" min="0"></div>
+      <div class="form-group"><label>Total Cost Paid ($)</label><input type="number" id="f-cost" step="0.01" min="0"></div>
+      <div class="form-group full"><label>Dealer</label><input type="text" id="f-dealer" placeholder="e.g. APMEX, JM Bullion"></div>
+      <div class="form-group full"><label>Notes</label><textarea id="f-note" placeholder="Optional notes"></textarea></div>
+      <div class="form-group full">
+        <label>Photo</label>
+        <input type="file" id="f-photo" accept="image/*" onchange="prevPhoto(event)">
+        <img id="f-prev" class="photo-preview" style="display:none">
+      </div>
+    </div>
+    <div class="mfoot">
+      <button class="btn btn-secondary" onclick="closeModal('entry-modal')">Cancel</button>
+      <button class="btn btn-primary" id="save-btn" onclick="saveEntry()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Invoice Modal -->
+<div class="modal-overlay" id="inv-modal">
+  <div class="modal wide">
+    <h2>&#128203; Paste Invoice / Receipt</h2>
+    <div id="inv-err" class="alert alert-err" style="display:none"></div>
+    <div id="inv-s1">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <button class="btn btn-secondary btn-sm" id="inv-tab-text" onclick="setInvTab('text')" style="border-color:var(--gold);color:var(--gold)">Paste Text</button>
+        <button class="btn btn-secondary btn-sm" id="inv-tab-pdf" onclick="setInvTab('pdf')">Upload PDF</button>
+      </div>
+      <div id="inv-text-mode">
+        <p style="color:#888;font-size:.83rem;margin-bottom:10px">Paste the full order confirmation text. Make sure to include the product lines, not just the headers.</p>
+        <textarea class="inv-textarea" id="inv-text" placeholder="Paste invoice or order confirmation text here..."></textarea>
+      </div>
+      <div id="inv-pdf-mode" style="display:none">
+        <p style="color:#888;font-size:.83rem;margin-bottom:10px">Upload your invoice PDF and Claude will extract all line items automatically.</p>
+        <input type="file" id="inv-pdf" accept="application/pdf" style="width:100%;padding:10px;background:#111;border:1px solid var(--border);border-radius:8px;color:#e8e8e8;font-size:.88rem">
+        <div id="inv-pdf-name" style="margin-top:8px;font-size:.8rem;color:#888"></div>
+      </div>
+      <div class="mfoot">
+        <button class="btn btn-secondary" onclick="closeModal('inv-modal')">Cancel</button>
+        <button class="btn btn-primary" id="parse-btn" onclick="parseInv()">&#129302; Parse with AI</button>
+      </div>
+    </div>
+    <div id="inv-s2" style="display:none">
+      <p style="color:#888;font-size:.83rem;margin-bottom:8px">Review and edit the extracted items, then save all to your portfolio.</p>
+      <div id="inv-items"></div>
+      <div class="mfoot">
+        <button class="btn btn-secondary" onclick="invBack()">&#8592; Back</button>
+        <button class="btn btn-primary" id="inv-save-btn" onclick="saveInv()">Save All</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Image viewer -->
+<div class="modal-overlay img-modal" id="img-modal">
+  <div class="modal" onclick="closeModal('img-modal')"><img id="img-big" src="" alt=""></div>
+</div>
+
+<script>
+const SB_URL = 'https://wgnhdguklxewazkfhzwe.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndnbmhkZ3VrbHhld2F6a2ZoendlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk1Mzk3NTEsImV4cCI6MjA5NTExNTc1MX0.0r30Zn3kUkAzLzZ8MjMf2yAw23ft3_ec3fzBe6CzX-0';
+const FN_URL = 'https://wgnhdguklxewazkfhzwe.supabase.co/functions/v1/metals-tracker';
+const { createClient } = supabase;
+const sb = createClient(SB_URL, SB_KEY);
+
+let user=null, entries=[], tab='all', editId=null, spotPrices={}, pendingPhoto=null, existingPhoto=null, invItems=[];
+
+async function doLogin() {
+  const em = document.getElementById('l-email').value.trim();
+  const pw = document.getElementById('l-pass').value;
+  const btn = document.getElementById('login-btn');
+  const err = document.getElementById('login-err');
+  err.style.display='none'; btn.disabled=true; btn.textContent='Signing in...';
+  const { data, error } = await sb.auth.signInWithPassword({ email: em, password: pw });
+  if (error) { err.textContent=error.message; err.style.display='block'; btn.disabled=false; btn.textContent='Sign In'; return; }
+  user = data.user; showApp();
+}
+async function doLogout() {
+  await sb.auth.signOut(); user=null; entries=[];
+  document.getElementById('app').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+}
+async function init() {
+  const { data } = await sb.auth.getSession();
+  if (data.session) { user = data.session.user; showApp(); }
+}
+async function showApp() {
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('app').style.display='flex';
+  await loadEntries();   // load entries first so product list is ready
+  refreshPrices();       // then kick off price fetch (don't await — updates when ready)
+}
+
+async function refreshPrices() {
+  const btn = document.getElementById('ref-btn');
+  const sp = document.getElementById('spots');
+  btn.disabled = true;
+  sp.innerHTML = '<div class="spinner"></div>';
+  try {
+    const sess = await sb.auth.getSession();
+    const tok = sess.data.session?.access_token || SB_KEY;
+    const r = await fetch(FN_URL + '?action=spot-prices', { headers: { Authorization: 'Bearer ' + tok } });
+    const spotData = await r.json();
+    if (spotData.error) throw new Error(spotData.error);
+    spotPrices = spotData;
+  } catch(e) {
+    sp.innerHTML = '<span style="color:#e55;font-size:.78rem" title="'+e.message+'">Price fetch failed</span>';
+    btn.disabled = false;
+    renderSummary(); renderTable();
+    return;
+  }
+  renderSpots(); renderSummary(); renderTable();
+  btn.disabled = false;
+}
+function renderSpots() {
+  const sp = document.getElementById('spots');
+  const ms = ['gold','silver','platinum','palladium','copper'];
+  const sy = {gold:'Au',silver:'Ag',platinum:'Pt',palladium:'Pd',copper:'Cu'};
+  const items = ms.filter(m=>spotPrices[m]).map(m =>
+    '<div class="spot-item"><span class="spot-label">'+sy[m]+'</span><span class="spot-value">$'+f2(spotPrices[m])+'</span></div>'
+  ).join('');
+  sp.innerHTML = items || '<span style="color:#555;font-size:.78rem">Prices unavailable</span>';
+}
+
+async function loadEntries() {
+  const { data, error } = await sb.from('metals_entries').select('*').eq('user_id', user.id).order('entry_date', { ascending: false });
+  if (error) { console.error(error); return; }
+  entries = data || []; renderSummary(); renderTable();
+}
+function filtered() {
+  let l = tab==='all' ? entries : entries.filter(e=>e.metal===tab);
+  const q = document.getElementById('q').value.toLowerCase();
+  if (q) l = l.filter(e => (e.product+' '+e.dealer+' '+e.note).toLowerCase().includes(q));
+  return l;
+}
+function renderSummary() {
+  const ms = ['gold','silver','copper','platinum','palladium'];
+  let tv=0, tc=0;
+  document.getElementById('sgrid').innerHTML = ms.map(m => {
+    const me = entries.filter(e=>e.metal===m);
+    if (!me.length) return '';
+    const oz = me.reduce((s,e)=>s+parseFloat(e.oz||0),0);
+    const cost = me.reduce((s,e)=>s+parseFloat(e.cost||0),0);
+    const spot = spotPrices[m]||0;
+    // Use stored product price per entry when available, fall back to spot
+    const mult = m==='copper' ? 4.5 : 1.1;
+    const val = me.reduce((s,e)=>s+parseFloat(e.oz||0),0) * spot * mult;
+    const safeVal = isNaN(val)||!isFinite(val) ? 0 : val;
+    const g = safeVal-cost;
+    tv+=safeVal; tc+=cost;
+    const gc = g>=0?'pos':'neg'; const gs = g>=0?'+':'-';
+    const pct = (cost>0 && isFinite(g/cost)) ? (g/cost*100).toFixed(1) : '0.0';
+    let h = '<div class="card '+m+'"><h3>'+m+'</h3><div class="oz">'+oz.toFixed(3)+' <span>troy oz</span></div>';
+    if (safeVal>0) {
+      if (spot) h += '<div class="stat"><label>Spot</label><span>$'+f2(spot)+'/oz</span></div>';
+      h += '<div class="stat"><label>Mkt Value</label><span>$'+f2(safeVal)+'</span></div>';
+      h += '<div class="stat"><label>Cost Basis</label><span>$'+f2(cost)+'</span></div>';
+      h += '<div class="stat"><label>Gain/Loss</label><span class="'+gc+'">'+gs+'$'+f2(Math.abs(g))+' ('+gs+pct+'%)</span></div>';
+    } else {
+      if (spot) h += '<div class="stat"><label>Spot</label><span>$'+f2(spot)+'/oz</span></div>';
+      h += '<div class="stat"><label>Cost Basis</label><span>$'+f2(cost)+'</span></div>';
+    }
+    return h + '</div>';
+  }).join('');
+  document.getElementById('ptotal').textContent = '$'+f2(tv||tc);
+  const ge = document.getElementById('pgain');
+  if (tv > 0) {
+    const g=tv-tc; const s=g>=0?'+':'-';
+    ge.textContent = s+'$'+f2(Math.abs(g))+' ('+(tc>0?(g/tc*100):0).toFixed(1)+'%)';
+    ge.className = 'portfolio-gain '+(g>=0?'pos':'neg');
+  } else { ge.textContent=''; }
+}
+function renderTable() {
+  const list = filtered();
+  const tb = document.getElementById('tbody');
+  document.getElementById('empty').style.display = list.length ? 'none' : 'block';
+  if (!list.length) { tb.innerHTML=''; return; }
+  tb.innerHTML = list.map(e => {
+    const oz = parseFloat(e.oz||0);
+    const spot = spotPrices[e.metal]||0;
+    const mult = e.metal==='copper' ? 4.5 : 1.1;
+    const rawVal = spot * oz * mult;
+    const val = isNaN(rawVal)||!isFinite(rawVal) ? 0 : rawVal;
+    const valLabel = '';
+    const g = val - parseFloat(e.cost||0);
+    const gs = val>0 ? (g>=0 ? '<span class="pos">+$'+f2(g)+'</span>' : '<span class="neg">-$'+f2(Math.abs(g))+'</span>') : '-';
+    const ppoz = oz>0 ? (parseFloat(e.cost)/oz).toFixed(2) : '-';
+    const ph = e.photo_url
+      ? '<img class="thumb" src="'+esc(e.photo_url)+'" onclick="viewImg(\''+esc(e.photo_url)+'\')" loading="lazy">'
+      : '<div class="nophoto">-</div>';
+    return '<tr><td>'+ph+'</td><td>'+(e.entry_date||'-')+'</td>'
+      +'<td><span class="badge '+e.metal+'">'+e.metal+'</span></td>'
+      +'<td>'+esc(e.product||'-')+'</td>'
+      +'<td>'+parseFloat(e.oz||0).toFixed(3)+'</td>'
+      +'<td>$'+f2(e.cost)+'</td>'
+      +'<td>$'+ppoz+'</td>'
+      +'<td>'+(val>0?'$'+f2(val)+valLabel:'-')+'</td>'
+      +'<td>'+gs+'</td>'
+      +'<td>'+esc(e.dealer||'-')+'</td>'
+      +'<td><div class="acts">'
+      +'<button class="btn btn-secondary btn-sm" onclick="openEdit(\''+e.id+'\')">Edit</button>'
+      +'<button class="btn btn-danger btn-sm" onclick="delEntry(\''+e.id+'\')">Del</button>'
+      +'</div></td></tr>';
+  }).join('');
+  // Load signed URLs for photos
+  list.filter(e=>e.photo_url && !e.photo_url.startsWith('http')).forEach(async e => {
+    const { data } = await sb.storage.from('metals-photos').createSignedUrl(e.photo_url, 3600);
+    if (data?.signedUrl) {
+      document.querySelectorAll('img.thumb[src="'+esc(e.photo_url)+'"]').forEach(img => {
+        img.src = data.signedUrl;
+        img.onclick = () => viewImg(data.signedUrl);
+      });
+    }
+  });
+}
+function setTab(m,el) { tab=m; document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); renderTable(); }
+
+function viewImg(u) { document.getElementById('img-big').src=u; document.getElementById('img-modal').classList.add('open'); }
+function prevPhoto(ev) {
+  const f=ev.target.files[0]; pendingPhoto=f;
+  if(f){const r=new FileReader();r.onload=e=>{const i=document.getElementById('f-prev');i.src=e.target.result;i.style.display='block';};r.readAsDataURL(f);}
+}
+async function uploadPhoto(f,uid) {
+  const ext=f.name.split('.').pop();
+  const path=uid+'/'+Date.now()+'.'+ext;
+  const{error}=await sb.storage.from('metals-photos').upload(path,f,{contentType:f.type});
+  if(error)throw error;
+  return path;
+}
+
+function openAdd() {
+  editId=null; existingPhoto=null; pendingPhoto=null;
+  document.getElementById('mtitle').textContent='Add Entry';
+  document.getElementById('f-date').value=new Date().toISOString().split('T')[0];
+  document.getElementById('f-metal').value='silver';
+  ['f-product','f-oz','f-cost','f-dealer','f-note'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('f-photo').value='';
+  document.getElementById('f-prev').style.display='none';
+  document.getElementById('merr').style.display='none';
+  document.getElementById('entry-modal').classList.add('open');
+}
+function openEdit(id) {
+  const e=entries.find(x=>x.id===id); if(!e) return;
+  editId=id; existingPhoto=e.photo_url; pendingPhoto=null;
+  document.getElementById('mtitle').textContent='Edit Entry';
+  document.getElementById('f-date').value=e.entry_date||'';
+  document.getElementById('f-metal').value=e.metal||'silver';
+  document.getElementById('f-product').value=e.product||'';
+  document.getElementById('f-oz').value=e.oz||'';
+  document.getElementById('f-cost').value=e.cost||'';
+  document.getElementById('f-dealer').value=e.dealer||'';
+  document.getElementById('f-note').value=e.note||'';
+  document.getElementById('f-photo').value='';
+  document.getElementById('merr').style.display='none';
+  const pi=document.getElementById('f-prev');
+  if(e.photo_url){
+    if(e.photo_url.startsWith('http')){pi.src=e.photo_url;pi.style.display='block';}
+    else{sb.storage.from('metals-photos').createSignedUrl(e.photo_url,3600).then(({data})=>{if(data?.signedUrl){pi.src=data.signedUrl;pi.style.display='block';}});}
+  } else { pi.style.display='none'; }
+  document.getElementById('entry-modal').classList.add('open');
+}
+async function saveEntry() {
+  const btn=document.getElementById('save-btn');
+  const err=document.getElementById('merr');
+  err.style.display='none';
+  const row={user_id:user.id,entry_date:document.getElementById('f-date').value,metal:document.getElementById('f-metal').value,product:document.getElementById('f-product').value.trim(),oz:parseFloat(document.getElementById('f-oz').value)||0,cost:parseFloat(document.getElementById('f-cost').value)||0,dealer:document.getElementById('f-dealer').value.trim(),note:document.getElementById('f-note').value.trim(),photo_url:existingPhoto||null};
+  if(!row.product){err.textContent='Product name is required.';err.style.display='block';return;}
+  btn.disabled=true; btn.textContent='Saving...';
+  try {
+    if(pendingPhoto) row.photo_url=await uploadPhoto(pendingPhoto,user.id);
+    if(editId){const{error}=await sb.from('metals_entries').update(row).eq('id',editId).eq('user_id',user.id);if(error)throw error;}
+    else{const{error}=await sb.from('metals_entries').insert(row);if(error)throw error;}
+    closeModal('entry-modal'); await loadEntries();
+  } catch(e){err.textContent=e.message;err.style.display='block';}
+  btn.disabled=false; btn.textContent='Save';
+}
+async function delEntry(id) {
+  if(!confirm('Delete this entry?'))return;
+  const{error}=await sb.from('metals_entries').delete().eq('id',id).eq('user_id',user.id);
+  if(!error) await loadEntries();
+}
+
+let invMode = 'text';
+function setInvTab(mode) {
+  invMode = mode;
+  document.getElementById('inv-text-mode').style.display = mode==='text' ? 'block' : 'none';
+  document.getElementById('inv-pdf-mode').style.display = mode==='pdf' ? 'block' : 'none';
+  document.getElementById('inv-tab-text').style.cssText = mode==='text' ? 'border-color:var(--gold);color:var(--gold)' : '';
+  document.getElementById('inv-tab-pdf').style.cssText = mode==='pdf' ? 'border-color:var(--gold);color:var(--gold)' : '';
+}
+function openInv() {
+  document.getElementById('inv-text').value='';
+  document.getElementById('inv-pdf').value='';
+  document.getElementById('inv-pdf-name').textContent='';
+  document.getElementById('inv-err').style.display='none';
+  document.getElementById('inv-s1').style.display='block';
+  document.getElementById('inv-s2').style.display='none';
+  setInvTab('text');
+  document.getElementById('inv-modal').classList.add('open');
+}
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('inv-pdf').addEventListener('change', e => {
+    const f = e.target.files[0];
+    document.getElementById('inv-pdf-name').textContent = f ? f.name + ' (' + (f.size/1024).toFixed(0) + ' KB)' : '';
+  });
+});
+function invBack(){document.getElementById('inv-s1').style.display='block';document.getElementById('inv-s2').style.display='none';}
+async function parseInv() {
+  const btn=document.getElementById('parse-btn');
+  const err=document.getElementById('inv-err');
+  err.style.display='none'; btn.disabled=true; btn.textContent='Parsing...';
+  try {
+    const sess=await sb.auth.getSession();
+    const tok=sess.data.session?.access_token||SB_KEY;
+    if (invMode === 'pdf') {
+      const file = document.getElementById('inv-pdf').files[0];
+      if (!file) throw new Error('Please select a PDF file first.');
+      // Extract text from PDF using PDF.js
+      btn.textContent = 'Reading PDF...';
+      const arrayBuffer = await file.arrayBuffer();
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let pdfText = '';
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        pdfText += content.items.map(item => item.str).join(' ') + '\n';
+      }
+      if (!pdfText.trim()) throw new Error('Could not extract text from PDF. It may be a scanned image.');
+      btn.textContent = 'Parsing...';
+      const r=await fetch(FN_URL+'?action=parse-invoice',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:JSON.stringify({text:pdfText})});
+      const d=await r.json();
+      if(d.error) throw new Error('API error: ' + d.error);
+      if(!d.items||!d.items.length) throw new Error('No precious metals items found in this PDF.');
+      invItems=d.items; renderInvItems();
+    } else {
+      const text=document.getElementById('inv-text').value.trim();
+      if(!text) throw new Error('Paste invoice text first.');
+      const r=await fetch(FN_URL+'?action=parse-invoice',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:JSON.stringify({text})});
+      const d=await r.json();
+      if(!d.items||!d.items.length) throw new Error('No items extracted. Make sure the product lines are included, not just the column headers.');
+      invItems=d.items; renderInvItems();
+    }
+    document.getElementById('inv-s1').style.display='none';
+    document.getElementById('inv-s2').style.display='block';
+  } catch(e){err.textContent=e.message;err.style.display='block';}
+  btn.disabled=false; btn.textContent='Parse with AI';
+}
+function renderInvItems() {
+  const rows=invItems.map((item,i)=>{
+    const opts=['gold','silver','copper','platinum','palladium'].map(m=>'<option value="'+m+'"'+(item.metal===m?' selected':'')+'>'+m+'</option>').join('');
+    return '<tr><td>'+(i+1)+'</td>'
+      +'<td><input type="date" value="'+(item.entry_date||'')+'" onchange="invItems['+i+'].entry_date=this.value"></td>'
+      +'<td><select onchange="invItems['+i+'].metal=this.value">'+opts+'</select></td>'
+      +'<td><input type="text" value="'+esc(item.product||'')+'" onchange="invItems['+i+'].product=this.value"></td>'
+      +'<td><input type="number" step="0.001" value="'+(item.oz||'')+'" onchange="invItems['+i+'].oz=parseFloat(this.value)"></td>'
+      +'<td><input type="number" step="0.01" value="'+(item.cost||'')+'" onchange="invItems['+i+'].cost=parseFloat(this.value)"></td>'
+      +'<td><input type="text" value="'+esc(item.dealer||'')+'" onchange="invItems['+i+'].dealer=this.value"></td>'
+      +'<td><button class="btn btn-danger btn-sm" onclick="invItems.splice('+i+',1);renderInvItems()">X</button></td></tr>';
+  }).join('');
+  document.getElementById('inv-items').innerHTML='<table class="inv-table"><thead><tr><th>#</th><th>Date</th><th>Metal</th><th>Product</th><th>Oz</th><th>Cost ($)</th><th>Dealer</th><th></th></tr></thead><tbody>'+rows+'</tbody></table>';
+}
+async function saveInv() {
+  const btn=document.getElementById('inv-save-btn');
+  const err=document.getElementById('inv-err');
+  err.style.display='none'; btn.disabled=true; btn.textContent='Saving...';
+  try {
+    const rows=invItems.map(item=>({user_id:user.id,entry_date:item.entry_date||new Date().toISOString().split('T')[0],metal:item.metal||'silver',product:item.product||'',oz:parseFloat(item.oz)||0,cost:parseFloat(item.cost)||0,dealer:item.dealer||'',note:'',photo_url:null}));
+    const{error}=await sb.from('metals_entries').insert(rows);
+    if(error)throw error;
+    closeModal('inv-modal'); await loadEntries();
+  } catch(e){err.textContent=e.message;err.style.display='block';}
+  btn.disabled=false; btn.textContent='Save All';
+}
+
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+function f2(n){return parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
+function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
+document.getElementById('l-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+init();
+</script>
+</body>
+</html>
