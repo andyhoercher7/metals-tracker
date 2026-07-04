@@ -70,12 +70,33 @@ All Anthropic / Yahoo / Finnhub calls now run server-side:
   upserts instead of duplicating, and now actually fires the earnings-miss
   sell triggers Claude reports (`sell_triggers_fired` was previously ignored).
 
+## The learning loop (live since 2026-07-04)
+
+The `alpha-feedback` edge function closes the loop the original design
+intended but never ran:
+
+- For every pick (deduped to first appearance per ticker) it computes the
+  forward return since pick date and the alpha vs IVV over the same window.
+- It correlates entry-time factor values (from `weekly_screens`) with
+  subsequent alpha — per-factor information coefficients.
+- It scores each macro theme (count, avg alpha, hit rate).
+- It writes one `model_feedback` row per week; the weekly screen already
+  loads the last 8 rows into the prompt, so the model now sees its own track
+  record. Weight-adjustment suggestions unlock automatically once 8 distinct
+  screen weeks exist.
+
+It runs every Friday 21:30 UTC via the pg_cron job `alpha-feedback-weekly`
+(see `supabase/migrations/schedule_weekly_feedback_job.sql`). Verified live:
+the first row is in `model_feedback` (29 tickers, 4 weeks of history).
+Nothing for you to configure.
+
 ## Still open (from the review, in priority order)
 
 - Deterministic stage-1 screening from real data (§4A of the review) — the
   screen is still LLM-driven; the prompt now at least demands honest
   `stage1_summary` counts and diversification caps (max 5 picks/theme,
   max 2/industry).
-- The `model_feedback` job so the learning loop actually engages (§2.2).
 - Theme caps / position sizing / trailing stops at the portfolio level (§4D).
-- Scheduled (cron) screen + review runs instead of manual buttons.
+- Scheduling the screen and position reviews themselves (feedback is already
+  scheduled; the screen is left manual on purpose so you review picks before
+  buying — say the word if you want it automated too).
