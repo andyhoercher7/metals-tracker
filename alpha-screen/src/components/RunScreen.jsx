@@ -227,6 +227,7 @@ export default function RunScreen() {
             us_listed: p.us_listed,
             macro_theme: p.macro_theme,
             status: 'WATCHING',
+            screen_variant: 'llm',
           }).select().single()
           if (insErr) throw insErr
           insertedPicks.push({ id: ins.id, ticker: p.ticker, isNew: true, model: p })

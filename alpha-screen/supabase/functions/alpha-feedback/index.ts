@@ -4,8 +4,13 @@
 //
 // Computes forward returns for every pick vs IVV since its pick date,
 // correlates entry-time factor values with subsequent alpha (factor ICs),
-// scores macro-theme accuracy, and writes one model_feedback row for this
-// week. The weekly screen reads the last 8 rows before generating picks.
+// scores macro-theme accuracy AND per-screen-variant (cohort) performance,
+// and writes one model_feedback row for this week. The weekly screen reads
+// the last 8 rows before generating picks.
+//
+// Cohorts: picks are tagged with screen_variant ('llm' today). When a second
+// screening method is added (e.g. a paid data-API screener), tag its picks
+// with a new variant and this job reports the head-to-head forward alpha.
 //
 // Cheap and idempotent (re-runs replace this week's row), no LLM calls — so
 // it accepts any valid project JWT (pg_cron invokes it with the anon key).
@@ -107,6 +112,19 @@ function pearson(pairs: [number, number][]): number | null {
 const mean = (a: number[]) => (a.length ? a.reduce((s, v) => s + v, 0) / a.length : null);
 const r2 = (n: number | null) => (n == null ? null : +n.toFixed(2));
 
+function scoreboard(rows: any[], key: string) {
+  const out: Record<string, { n: number; avg_alpha: number | null; hit_rate: number | null }> = {};
+  for (const val of [...new Set(rows.map((r) => r[key]))]) {
+    const t = rows.filter((r) => r[key] === val);
+    out[String(val)] = {
+      n: t.length,
+      avg_alpha: r2(mean(t.map((x) => x.alpha))),
+      hit_rate: r2(t.filter((x) => x.alpha > 0).length / t.length * 100),
+    };
+  }
+  return out;
+}
+
 // ── Main ────────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -121,7 +139,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: picks, error: pickErr } = await db
       .from('picks')
-      .select('id, ticker, week_date, price_at_pick, target_price, p_2x, macro_theme, status')
+      .select('id, ticker, week_date, price_at_pick, target_price, p_2x, macro_theme, status, screen_variant')
       .not('price_at_pick', 'is', null);
     if (pickErr) throw pickErr;
     if (!picks?.length) return json({ ok: false, reason: 'no picks with entry prices' });
@@ -138,13 +156,16 @@ Deno.serve(async (req: Request) => {
       if (!factorsByTicker[s.ticker]) factorsByTicker[s.ticker] = s;
     });
 
-    // Dedupe picks to one per ticker (earliest = entry) so re-picked tickers
-    // don't double-count.
-    const byTicker: Record<string, any> = {};
+    // Dedupe picks to one per (ticker, variant), earliest = entry, so
+    // re-picked tickers don't double-count but each cohort keeps its own entry.
+    const byKey: Record<string, any> = {};
     picks
       .sort((a, b) => (a.week_date < b.week_date ? -1 : 1))
-      .forEach((p) => { if (!byTicker[p.ticker]) byTicker[p.ticker] = p; });
-    const entries = Object.values(byTicker) as any[];
+      .forEach((p) => {
+        const k = `${p.ticker}|${p.screen_variant || 'llm'}`;
+        if (!byKey[k]) byKey[k] = p;
+      });
+    const entries = Object.values(byKey) as any[];
 
     const earliest = entries.reduce((m, p) => (p.week_date < m ? p.week_date : m), entries[0].week_date);
     const [prices, ivv] = await Promise.all([
@@ -167,6 +188,7 @@ Deno.serve(async (req: Request) => {
         week_date: p.week_date,
         status: p.status,
         macro_theme: p.macro_theme || 'OTHER',
+        variant: p.screen_variant || 'llm',
         ret: r2(ret),
         ivv_ret: r2(ivvRet),
         alpha: r2(ret - ivvRet),
@@ -198,16 +220,9 @@ Deno.serve(async (req: Request) => {
     const best = effective[0] || null;
     const worst = effective[effective.length - 1] || null;
 
-    // Macro theme scoreboard.
-    const themes: Record<string, { n: number; avg_alpha: number | null; hit_rate: number | null }> = {};
-    for (const theme of [...new Set(rows.map((r) => r.macro_theme))]) {
-      const t = rows.filter((r) => r.macro_theme === theme);
-      themes[theme] = {
-        n: t.length,
-        avg_alpha: r2(mean(t.map((x) => x.alpha))),
-        hit_rate: r2(t.filter((x) => x.alpha > 0).length / t.length * 100),
-      };
-    }
+    // Scoreboards: macro theme and screen-variant cohorts.
+    const themes = scoreboard(rows, 'macro_theme');
+    const cohorts = scoreboard(rows, 'variant');
 
     const distinctWeeks = new Set(picks.map((p: any) => p.week_date)).size;
     const suggestions =
@@ -216,21 +231,27 @@ Deno.serve(async (req: Request) => {
             status: 'ok',
             weeks_of_history: distinctWeeks,
             factor_ics: ics,
+            cohorts,
             guidance:
-              'ICs are alpha-predictive when positive (or negative for forward_pe/debt_equity). Shift weight toward high-|IC| factors in steps of no more than 2pp per quarter.',
+              'ICs are alpha-predictive when positive (or negative for forward_pe/debt_equity). Shift weight toward high-|IC| factors in steps of no more than 2pp per quarter. Compare cohorts on avg_alpha and hit_rate before trusting a new screening method with real money.',
           }
         : {
             status: 'insufficient_history',
             weeks_of_history: distinctWeeks,
             weeks_required: 8,
             factor_ics: ics,
+            cohorts,
           };
 
     const avgAlpha = r2(mean(rows.map((x) => x.alpha)));
     const progress = rows.map((x) => x.target_progress_pct).filter((v) => v != null) as number[];
+    const cohortLine = Object.entries(cohorts)
+      .map(([k, v]) => `${k}: n=${v.n}, avg alpha ${v.avg_alpha}%, hit rate ${v.hit_rate}%`)
+      .join(' | ');
     const notes =
       `${rows.length} tickers tracked over ${distinctWeeks} screen week(s). ` +
       `Avg return ${r2(mean(rows.map((x) => x.ret)))}%, avg alpha vs IVV ${avgAlpha}%. ` +
+      `Cohorts — ${cohortLine}. ` +
       `Best factor: ${best ? `${best[0]} (effective IC ${best[1]})` : 'n/a'}; ` +
       `worst: ${worst ? `${worst[0]} (effective IC ${worst[1]})` : 'n/a'}. ` +
       `Sample is small — treat ICs as directional only. Per-ticker: ` +
@@ -250,7 +271,7 @@ Deno.serve(async (req: Request) => {
     });
     if (insErr) throw insErr;
 
-    return json({ ok: true, week_date: weekDate, picks: rows.length, avg_alpha: avgAlpha, themes, factor_ics: ics });
+    return json({ ok: true, week_date: weekDate, picks: rows.length, avg_alpha: avgAlpha, cohorts, themes, factor_ics: ics });
   } catch (e) {
     return json({ error: (e as Error).message }, 500);
   }
