@@ -10,6 +10,20 @@
 //   fundamentals     { tickers[] }            -> { configured, data: {T: {...}} }
 //   run-screen       { systemPrompt }         -> screen JSON (schema-enforced)
 //   position-review  { prompt }               -> review JSON (schema-enforced)
+//   claude-start     { kind, systemPrompt|prompt } -> { job_id } (background batch job)
+//   claude-poll      { job_id }               -> { status: running|done|error, data?, error? }
+//
+// Long screen runs exceed the 150s wall-clock limit on Supabase's free plan
+// (killed with status 546), so the screen runs as an Anthropic Message Batch:
+// claude-start submits the batch and returns instantly; the client polls
+// claude-poll until the batch ends. Batch pricing is also 50% of standard.
+
+import { createClient } from 'npm:@supabase/supabase-js@2';
+
+const supa = createClient(
+  Deno.env.get('SUPABASE_URL')!,
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
+);
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -370,6 +384,157 @@ async function callClaude(opts: {
   throw new Error('Model paused too many times without finishing.');
 }
 
+// ── Background Claude jobs (Anthropic Batches API) ──────────────────────────
+
+const REVIEW_SYSTEM =
+  'You are a disciplined stock analyst reviewing held positions. Use web search for current news and prices. Be specific and evidence-based.';
+
+const anthropicHeaders = () => ({
+  'x-api-key': Deno.env.get('ANTHROPIC_API_KEY') ?? '',
+  'anthropic-version': '2023-06-01',
+  'content-type': 'application/json',
+});
+
+function claudeParams(kind: string, system: string, messages: unknown[], maxSearches: number) {
+  return {
+    model: MODEL,
+    max_tokens: 16000,
+    thinking: { type: 'adaptive' },
+    system,
+    tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: maxSearches }],
+    output_config: {
+      format: { type: 'json_schema', schema: kind === 'screen' ? SCREEN_SCHEMA : REVIEW_SCHEMA },
+    },
+    messages,
+  };
+}
+
+async function createBatch(params: unknown): Promise<string> {
+  const r = await fetch('https://api.anthropic.com/v1/messages/batches', {
+    method: 'POST',
+    headers: anthropicHeaders(),
+    body: JSON.stringify({ requests: [{ custom_id: 'r1', params }] }),
+  });
+  const data = await r.json();
+  if (data.error) throw new Error(`Anthropic API: ${data.error.message}`);
+  return data.id;
+}
+
+async function actionClaudeStart(body: any) {
+  if (!Deno.env.get('ANTHROPIC_API_KEY')) {
+    throw new Error('ANTHROPIC_API_KEY not configured on the edge function');
+  }
+  const kind = body.kind;
+  let system: string, userContent: string, maxSearches: number;
+  if (kind === 'screen') {
+    if (!body.systemPrompt) throw new Error('systemPrompt required');
+    system = body.systemPrompt;
+    userContent = body.userPrompt ||
+      'Run the full two-stage stock screen now, following the system prompt. Use web search for real data. Return the JSON.';
+    maxSearches = 15;
+    // Re-clicking Run Screen resumes the in-flight job instead of paying twice.
+    const { data: existing } = await supa
+      .from('claude_jobs')
+      .select('id')
+      .eq('kind', 'screen')
+      .eq('status', 'running')
+      .gte('created_at', new Date(Date.now() - 3 * 3600_000).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (existing) return { job_id: existing.id, resumed: true };
+  } else if (kind === 'review') {
+    if (!body.prompt) throw new Error('prompt required');
+    system = REVIEW_SYSTEM;
+    userContent = body.prompt;
+    maxSearches = 8;
+  } else {
+    throw new Error('kind must be "screen" or "review"');
+  }
+
+  const messages = [{ role: 'user', content: userContent }];
+  const batchId = await createBatch(claudeParams(kind, system, messages, maxSearches));
+  const { data: job, error } = await supa
+    .from('claude_jobs')
+    .insert({ kind, status: 'running', batch_id: batchId, system_prompt: system, messages, max_searches: maxSearches })
+    .select('id')
+    .single();
+  if (error) throw new Error(`job insert failed: ${error.message}`);
+  return { job_id: job.id };
+}
+
+async function failJob(jobId: string, msg: string) {
+  await supa.from('claude_jobs')
+    .update({ status: 'error', error: msg, updated_at: new Date().toISOString() })
+    .eq('id', jobId);
+  return { status: 'error', error: msg };
+}
+
+async function actionClaudePoll(body: any) {
+  const { data: job, error: jerr } = await supa
+    .from('claude_jobs').select('*').eq('id', body.job_id).maybeSingle();
+  if (jerr) throw new Error(jerr.message);
+  if (!job) throw new Error('Unknown job_id');
+  if (job.status === 'done') return { status: 'done', data: job.result };
+  if (job.status === 'error') return { status: 'error', error: job.error };
+
+  const br = await fetch(`https://api.anthropic.com/v1/messages/batches/${job.batch_id}`, {
+    headers: anthropicHeaders(),
+  });
+  const batch = await br.json();
+  if (batch.error) return failJob(job.id, `Anthropic API: ${batch.error.message}`);
+  if (batch.processing_status !== 'ended') return { status: 'running' };
+
+  const rr = await fetch(
+    batch.results_url || `https://api.anthropic.com/v1/messages/batches/${job.batch_id}/results`,
+    { headers: anthropicHeaders() },
+  );
+  const line = (await rr.text()).split('\n').find((l) => l.trim());
+  if (!line) return failJob(job.id, 'Batch ended with no results.');
+  const result = JSON.parse(line).result;
+  if (result.type !== 'succeeded') {
+    return failJob(job.id, `Batch ${result.type}: ${JSON.stringify(result.error ?? '')}`);
+  }
+
+  const msg = result.message;
+  if (msg.stop_reason === 'pause_turn') {
+    // Long web-search turns pause; continue the conversation in a new batch.
+    if ((job.continuations ?? 0) >= 6) {
+      return failJob(job.id, 'Model paused too many times without finishing.');
+    }
+    const messages = [...job.messages, { role: 'assistant', content: msg.content }];
+    const batchId = await createBatch(
+      claudeParams(job.kind, job.system_prompt, messages, job.max_searches),
+    );
+    await supa.from('claude_jobs')
+      .update({
+        batch_id: batchId, messages,
+        continuations: (job.continuations ?? 0) + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', job.id);
+    return { status: 'running' };
+  }
+  if (msg.stop_reason === 'refusal') return failJob(job.id, 'Model declined the request.');
+  if (msg.stop_reason === 'max_tokens') {
+    return failJob(job.id, 'Response hit the token limit before the JSON finished. Try again.');
+  }
+
+  const textBlocks = (msg.content || []).filter((b: any) => b.type === 'text');
+  const last = textBlocks[textBlocks.length - 1];
+  if (!last) return failJob(job.id, 'No text content in model response.');
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(last.text);
+  } catch (e) {
+    return failJob(job.id, `Could not parse model JSON: ${(e as Error).message}`);
+  }
+  await supa.from('claude_jobs')
+    .update({ status: 'done', result: parsed, updated_at: new Date().toISOString() })
+    .eq('id', job.id);
+  return { status: 'done', data: parsed };
+}
+
 // ── Router ──────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -394,6 +559,11 @@ Deno.serve(async (req: Request) => {
         return json(await actionAudit(body.ticker));
       case 'fundamentals':
         return json(await actionFundamentals(body.tickers || []));
+      case 'claude-start':
+        return json(await actionClaudeStart(body));
+      case 'claude-poll':
+        if (!body.job_id) return json({ error: 'job_id required' }, 400);
+        return json(await actionClaudePoll(body));
       case 'run-screen':
         if (!body.systemPrompt) return json({ error: 'systemPrompt required' }, 400);
         return json(
