@@ -50,6 +50,9 @@ All Anthropic / Yahoo / Finnhub calls now run server-side:
      required; some local copies of the project don't have it)
    - `src/components/RunScreen.jsx`
    - `src/components/PositionTracker.jsx`
+   - `src/components/Dashboard.jsx` (required — the old Dashboard imported
+     `fundamentalsConfigured`, which the new server-side fundamentals module
+     no longer exports; without this the whole app renders a blank page)
 5. `npm uninstall @anthropic-ai/sdk` (no longer used client-side), rebuild,
    redeploy to Netlify.
 
