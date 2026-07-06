@@ -46,6 +46,8 @@ All Anthropic / Yahoo / Finnhub calls now run server-side:
    - `src/lib/prices.js`
    - `src/lib/fundamentals.js`
    - `src/lib/systemPrompt.js`
+   - `src/lib/portfolio.js` (P&L / IVV benchmark math used by the tracker —
+     required; some local copies of the project don't have it)
    - `src/components/RunScreen.jsx`
    - `src/components/PositionTracker.jsx`
 5. `npm uninstall @anthropic-ai/sdk` (no longer used client-side), rebuild,
