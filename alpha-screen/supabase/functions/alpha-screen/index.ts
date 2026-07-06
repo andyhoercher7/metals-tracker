@@ -443,6 +443,18 @@ async function actionClaudeStart(body: any) {
       .limit(1)
       .maybeSingle();
     if (existing) return { job_id: existing.id, resumed: true };
+    // If the tab was closed and the cron poller finished the job meanwhile,
+    // hand back the recent result instead of billing a second run.
+    const { data: recentDone } = await supa
+      .from('claude_jobs')
+      .select('id')
+      .eq('kind', 'screen')
+      .eq('status', 'done')
+      .gte('updated_at', new Date(Date.now() - 2 * 3600_000).toISOString())
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (recentDone) return { job_id: recentDone.id, resumed: true };
   } else if (kind === 'review') {
     if (!body.prompt) throw new Error('prompt required');
     system = REVIEW_SYSTEM;
@@ -502,16 +514,24 @@ async function actionClaudePoll(body: any) {
     if ((job.continuations ?? 0) >= 6) {
       return failJob(job.id, 'Model paused too many times without finishing.');
     }
+    // Claim the continuation first — the client and the cron poller can race,
+    // and only one of them may submit (and pay for) the follow-up batch.
+    const { data: claimed } = await supa.from('claude_jobs')
+      .update({
+        continuations: (job.continuations ?? 0) + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', job.id)
+      .eq('batch_id', job.batch_id)
+      .eq('continuations', job.continuations ?? 0)
+      .select('id');
+    if (!claimed || claimed.length === 0) return { status: 'running' };
     const messages = [...job.messages, { role: 'assistant', content: msg.content }];
     const batchId = await createBatch(
       claudeParams(job.kind, job.system_prompt, messages, job.max_searches),
     );
     await supa.from('claude_jobs')
-      .update({
-        batch_id: batchId, messages,
-        continuations: (job.continuations ?? 0) + 1,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ batch_id: batchId, messages, updated_at: new Date().toISOString() })
       .eq('id', job.id);
     return { status: 'running' };
   }
@@ -540,13 +560,19 @@ async function actionClaudePoll(body: any) {
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: CORS });
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
-  if (!isAuthenticatedUser(req)) return json({ error: 'Sign-in required' }, 401);
 
   let body: any;
   try {
     body = await req.json();
   } catch {
     return json({ error: 'Invalid JSON body' }, 400);
+  }
+
+  // claude-poll is allowed with any valid project JWT (the cron poller uses
+  // the anon key): job ids are unguessable UUIDs and it exposes no secrets.
+  // Everything else still requires a signed-in user.
+  if (body.action !== 'claude-poll' && !isAuthenticatedUser(req)) {
+    return json({ error: 'Sign-in required' }, 401);
   }
 
   try {
