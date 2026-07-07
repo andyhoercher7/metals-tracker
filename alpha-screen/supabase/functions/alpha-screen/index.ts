@@ -734,6 +734,247 @@ async function actionClaudePoll(body: any) {
   return { status: 'done', data: parsed };
 }
 
+// ── Weekly position reviews, auto-run server-side ───────────────────────────
+// Ported from the client (lib/screeningPrompts.js, lib/sellRules.js) so the
+// whole weekly review runs overnight with nobody at the keyboard. Results are
+// written straight into weekly_position_reviews / position_tracker /
+// sell_triggers, so the app shows them the moment the user opens it — no click.
+
+// deno-lint-ignore no-explicit-any
+function buildWeeklyReviewPrompt(position: any, currentPrice: number, recentNews: string): string {
+  const target = position.avg_cost_basis ? (position.avg_cost_basis * 2).toFixed(2) : 'N/A';
+  const chg = position.avg_cost_basis
+    ? (((currentPrice - position.avg_cost_basis) / position.avg_cost_basis) * 100).toFixed(1)
+    : 'N/A';
+  return `
+Review this held position for the week ending ${new Date().toISOString().split('T')[0]}.
+
+POSITION DATA:
+- Ticker: ${position.ticker}
+- Entry price (your cost basis): $${position.avg_cost_basis}
+- Current price: $${currentPrice}
+- Price change since entry: ${chg}%
+- Weeks held: ${position.weeks_held}
+- Original thesis: ${position.entry_thesis || 'N/A'}
+- Target price (2x your cost basis): $${target}
+
+RECENT NEWS AND CONTEXT:
+${recentNews}
+
+Provide a structured weekly review:
+1. Price performance context (vs market, vs sector)
+2. Any company-specific news that impacts the thesis
+3. Industry/macro developments relevant to this position
+4. Thesis status: INTACT / WEAKENING / BROKEN (with specific evidence)
+5. Signal: STRONG_HOLD / HOLD / ADD / TRIM / SELL
+6. Signal rationale (be specific — what would change this signal?)
+7. If earnings were released this week, post-earnings analysis
+
+Apply sell rules automatically and flag any that are triggered.
+Return the structured JSON.`;
+}
+
+// deno-lint-ignore no-explicit-any
+function evaluateSellRules(position: any, reviewData: any): any[] {
+  const triggers: any[] = [];
+  const { price_change_since_entry, thesis_status } = reviewData || {};
+  const weeksHeld = position.weeks_held || 0;
+  if (price_change_since_entry != null && price_change_since_entry <= -25 && weeksHeld > 6) {
+    triggers.push({ trigger_type: 'DRAWDOWN_25PCT', trigger_description: `Price down ${Math.abs(price_change_since_entry).toFixed(1)}% from entry after ${weeksHeld} weeks`, action_on_trigger: 'REVIEW' });
+  }
+  if (weeksHeld >= 8 && price_change_since_entry != null && Math.abs(price_change_since_entry) <= 10) {
+    triggers.push({ trigger_type: 'FLAT_8_WEEKS', trigger_description: `Held ${weeksHeld} weeks with only ${price_change_since_entry?.toFixed(1)}% move — no visible catalyst`, action_on_trigger: 'SELL_50' });
+  }
+  if (position.avg_cost_basis && position.current_price) {
+    const target2x = position.avg_cost_basis * 2;
+    if (position.current_price >= target2x) {
+      triggers.push({ trigger_type: 'TARGET_HIT', trigger_description: `Current price $${position.current_price.toFixed(2)} reached 2x target $${target2x.toFixed(2)} (2x cost basis $${position.avg_cost_basis.toFixed(2)})`, action_on_trigger: 'SELL_50' });
+    }
+  }
+  if (weeksHeld >= 48) {
+    triggers.push({ trigger_type: 'TIME_DECAY_WEEK_48', trigger_description: `Position held ${weeksHeld} weeks — approaching 12-month window`, action_on_trigger: 'SELL_100' });
+  }
+  if (thesis_status === 'BROKEN') {
+    triggers.push({ trigger_type: 'THESIS_BROKEN', trigger_description: 'Weekly review flagged thesis as BROKEN', action_on_trigger: 'SELL_100' });
+  }
+  return triggers;
+}
+
+// Submit many review requests as ONE batch (one request per held position).
+// deno-lint-ignore no-explicit-any
+async function createReviewBatch(requests: any[]): Promise<string> {
+  const r = await fetch('https://api.anthropic.com/v1/messages/batches', {
+    method: 'POST',
+    headers: anthropicHeaders(),
+    body: JSON.stringify({ requests }),
+  });
+  const data = await r.json();
+  if (data.error) throw new Error(`Anthropic API: ${data.error.message}`);
+  return data.id;
+}
+
+const weekDateStr = () => new Date().toISOString().split('T')[0];
+
+// Weekly cron entry point for reviews. Refreshes held-position prices, then
+// submits one batch with a light review per position. No-ops if this week's
+// reviews already exist (manual run or a prior cron tick).
+async function actionScheduledReview() {
+  const weekDate = weekDateStr();
+
+  const { data: alreadyRun } = await supa
+    .from('weekly_review_runs').select('id').eq('week_date', weekDate).limit(1).maybeSingle();
+  if (alreadyRun) return { skipped: true, reason: 'A review run already exists for this week.' };
+  const { data: alreadyReviewed } = await supa
+    .from('weekly_position_reviews').select('id').eq('week_date', weekDate).limit(1).maybeSingle();
+  if (alreadyReviewed) return { skipped: true, reason: 'Positions already reviewed this week.' };
+
+  const { data: positions } = await supa
+    .from('position_tracker')
+    .select('id, ticker, pick_id, avg_cost_basis, current_price, weeks_held, picks(entry_thesis)')
+    .gt('shares_held', 0);
+  if (!positions || positions.length === 0) return { skipped: true, reason: 'No held positions.' };
+
+  // Refresh prices so price-based rules use fresh data (best effort).
+  try {
+    const { prices } = await actionQuotes(positions.map((p: any) => p.ticker));
+    await Promise.all(positions.map((p: any) => {
+      const px = prices[p.ticker];
+      if (px == null) return Promise.resolve();
+      p.current_price = +Number(px).toFixed(2);
+      return supa.from('position_tracker')
+        .update({ current_price: p.current_price, updated_at: new Date().toISOString() })
+        .eq('id', p.id);
+    }));
+  } catch { /* stale prices are acceptable */ }
+
+  const requests = positions.map((p: any) => {
+    const entry_thesis = p.picks?.entry_thesis;
+    const prompt = buildWeeklyReviewPrompt(
+      { ...p, entry_thesis },
+      p.current_price || p.avg_cost_basis,
+      `Search for recent news, earnings, and analyst updates for ${p.ticker}.`,
+    );
+    return {
+      custom_id: p.id,
+      params: {
+        model: MODEL,
+        max_tokens: 5000,
+        system: 'You are a disciplined stock analyst reviewing held positions. Use web search for current news and prices. Be specific and evidence-based. Keep searches focused.',
+        tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 3 }],
+        output_config: { format: { type: 'json_schema', schema: REVIEW_SCHEMA } },
+        messages: [{ role: 'user', content: prompt }],
+      },
+    };
+  });
+
+  const batchId = await createReviewBatch(requests);
+  const meta = positions.map((p: any) => ({
+    cid: p.id, position_id: p.id, ticker: p.ticker, pick_id: p.pick_id,
+    avg_cost_basis: p.avg_cost_basis, current_price: p.current_price, weeks_held: p.weeks_held,
+  }));
+  const { error } = await supa.from('weekly_review_runs')
+    .insert({ week_date: weekDate, batch_id: batchId, status: 'running', positions: meta });
+  if (error) throw new Error(`review run insert failed: ${error.message}`);
+  return { started: true, positions: positions.length };
+}
+
+// Poll running review batches; when ended, write every position's review.
+async function actionReviewPoll() {
+  const { data: runs } = await supa
+    .from('weekly_review_runs').select('*').eq('status', 'running')
+    .gte('created_at', new Date(Date.now() - 36 * 3600_000).toISOString());
+  if (!runs || runs.length === 0) return { running: 0 };
+
+  for (const run of runs) {
+    const br = await fetch(`https://api.anthropic.com/v1/messages/batches/${run.batch_id}`, {
+      headers: anthropicHeaders(),
+    });
+    const batch = await br.json();
+    if (batch.error) continue;
+    if (batch.processing_status !== 'ended') continue;
+
+    const rr = await fetch(
+      batch.results_url || `https://api.anthropic.com/v1/messages/batches/${run.batch_id}/results`,
+      { headers: anthropicHeaders() },
+    );
+    const lines = (await rr.text()).split('\n').filter((l) => l.trim());
+    const metaById: Record<string, any> = {};
+    (run.positions || []).forEach((m: any) => { metaById[m.cid] = m; });
+    const weekDate = run.week_date;
+
+    for (const line of lines) {
+      let entry: any;
+      try { entry = JSON.parse(line); } catch { continue; }
+      const meta = metaById[entry.custom_id];
+      if (!meta || entry.result?.type !== 'succeeded') continue;
+      const msg = entry.result.message;
+      const textBlocks = (msg.content || []).filter((b: any) => b.type === 'text');
+      const last = textBlocks[textBlocks.length - 1];
+      if (!last) continue;
+      let review: any;
+      try { review = JSON.parse(last.text); } catch { continue; }
+
+      const pos = {
+        weeks_held: meta.weeks_held, avg_cost_basis: meta.avg_cost_basis,
+        current_price: meta.current_price, ticker: meta.ticker,
+      };
+      const autoTriggers = evaluateSellRules(pos, {
+        price_change_since_entry: review.price_change_since_entry,
+        thesis_status: review.thesis_status,
+      });
+      const seen = new Set(autoTriggers.map((t) => t.trigger_type));
+      (review.sell_triggers_fired || []).forEach((t: any) => {
+        if (seen.has(t.trigger_type)) return;
+        seen.add(t.trigger_type);
+        autoTriggers.push({ trigger_type: t.trigger_type, trigger_description: `Flagged by weekly review: ${t.trigger_type}`, action_on_trigger: t.action });
+      });
+
+      await supa.from('position_tracker').update({
+        thesis_intact: review.thesis_status === 'INTACT',
+        last_reviewed: weekDate,
+        updated_at: new Date().toISOString(),
+      }).eq('id', meta.position_id);
+
+      await supa.from('weekly_position_reviews').upsert({
+        position_tracker_id: meta.position_id,
+        week_date: weekDate,
+        price_at_review: meta.current_price,
+        price_change_wow: review.price_change_wow,
+        price_change_since_entry: review.price_change_since_entry,
+        market_context: review.market_context,
+        industry_context: review.industry_context,
+        company_specific_news: review.company_specific_news,
+        thesis_status: review.thesis_status,
+        hold_buy_sell_signal: review.hold_buy_sell_signal,
+        signal_rationale: review.signal_rationale,
+        earnings_review: review.earnings_review,
+        post_earnings_notes: review.post_earnings_notes,
+      }, { onConflict: 'position_tracker_id,week_date' });
+
+      if (autoTriggers.length > 0 && meta.pick_id) {
+        for (const trigger of autoTriggers) {
+          const { data: existing } = await supa.from('sell_triggers').select('id')
+            .eq('pick_id', meta.pick_id).eq('trigger_type', trigger.trigger_type)
+            .eq('triggered', false).maybeSingle();
+          if (existing) {
+            await supa.from('sell_triggers').update({ triggered: true, triggered_date: weekDate }).eq('id', existing.id);
+          } else {
+            await supa.from('sell_triggers').insert({
+              pick_id: meta.pick_id, ticker: meta.ticker, ...trigger,
+              triggered: true, triggered_date: weekDate,
+            });
+          }
+        }
+      }
+    }
+
+    await supa.from('weekly_review_runs')
+      .update({ status: 'done', updated_at: new Date().toISOString() })
+      .eq('id', run.id);
+  }
+  return { processed: runs.length };
+}
+
 // ── Router ──────────────────────────────────────────────────────────────────
 
 Deno.serve(async (req: Request) => {
@@ -752,7 +993,7 @@ Deno.serve(async (req: Request) => {
   // unguessable UUIDs; scheduled-screen no-ops unless the last screen is over
   // 5 days old, so it cannot be abused to burn credits. Everything else still
   // requires a signed-in user.
-  if (!['claude-poll', 'scheduled-screen'].includes(body.action) && !isAuthenticatedUser(req)) {
+  if (!['claude-poll', 'scheduled-screen', 'scheduled-review', 'review-poll'].includes(body.action) && !isAuthenticatedUser(req)) {
     return json({ error: 'Sign-in required' }, 401);
   }
 
@@ -770,6 +1011,10 @@ Deno.serve(async (req: Request) => {
         return json(await actionClaudeStart(body));
       case 'scheduled-screen':
         return json(await actionScheduledScreen());
+      case 'scheduled-review':
+        return json(await actionScheduledReview());
+      case 'review-poll':
+        return json(await actionReviewPoll());
       case 'claude-poll':
         if (!body.job_id) return json({ error: 'job_id required' }, 400);
         return json(await actionClaudePoll(body));
