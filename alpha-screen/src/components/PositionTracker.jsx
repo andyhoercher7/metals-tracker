@@ -266,7 +266,12 @@ export default function PositionTracker() {
         return
       }
 
-      for (const pos of toReview) {
+      // Review positions with bounded parallelism instead of one-at-a-time,
+      // so a full review finishes in a few minutes rather than ~1 min ×
+      // every holding. Each position is independent (its own DB rows), and a
+      // failure on one ticker is logged and skipped without aborting the rest.
+      const reviewOne = async (pos) => {
+       try {
         addLog(`Reviewing ${pos.ticker}...`)
 
         const prompt = buildWeeklyReviewPrompt(
@@ -359,6 +364,16 @@ export default function PositionTracker() {
         }
 
         addLog(`✓ ${pos.ticker}: ${reviewData.thesis_status} — ${reviewData.hold_buy_sell_signal}`)
+       } catch (err) {
+        addLog(`⚠ ${pos.ticker}: review failed (${err.message}) — skipped.`)
+       }
+      }
+
+      // Run up to 4 reviews at once; each batch waits before starting the next
+      // so we don't overwhelm the API or the edge function's rate limits.
+      const CONCURRENCY = 4
+      for (let i = 0; i < toReview.length; i += CONCURRENCY) {
+        await Promise.all(toReview.slice(i, i + CONCURRENCY).map(reviewOne))
       }
 
       addLog('✅ All positions reviewed.')

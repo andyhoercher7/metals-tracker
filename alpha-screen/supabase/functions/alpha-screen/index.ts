@@ -337,6 +337,8 @@ async function callClaude(opts: {
   userContent: string;
   schema: unknown;
   maxSearches: number;
+  maxTokens?: number;
+  thinking?: boolean;
 }) {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY');
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured on the edge function');
@@ -355,8 +357,11 @@ async function callClaude(opts: {
       },
       body: JSON.stringify({
         model: MODEL,
-        max_tokens: 16000,
-        thinking: { type: 'adaptive' },
+        max_tokens: opts.maxTokens ?? 16000,
+        // Adaptive thinking is powerful but slow; a synchronous call must
+        // finish inside the platform's 150s wall-clock limit, so the light
+        // per-position review path turns it off.
+        ...(opts.thinking === false ? {} : { thinking: { type: 'adaptive' } }),
         ...(opts.system ? { system: opts.system } : {}),
         tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: opts.maxSearches }],
         output_config: { format: { type: 'json_schema', schema: opts.schema } },
@@ -749,10 +754,16 @@ Deno.serve(async (req: Request) => {
         return json(
           await callClaude({
             system:
-              'You are a disciplined stock analyst reviewing held positions. Use web search for current news and prices. Be specific and evidence-based.',
+              'You are a disciplined stock analyst reviewing held positions. Use web search for current news and prices. Be specific and evidence-based. Keep searches focused — a few targeted queries are enough.',
             userContent: body.prompt,
             schema: REVIEW_SCHEMA,
-            maxSearches: 8,
+            // Light profile: one position, focused news lookup. Fewer searches
+            // and no adaptive thinking so each review finishes well under the
+            // 150s synchronous wall-clock limit (a full-thinking review was
+            // timing out with a 546).
+            maxSearches: 3,
+            maxTokens: 5000,
+            thinking: false,
           }),
         );
       default:
