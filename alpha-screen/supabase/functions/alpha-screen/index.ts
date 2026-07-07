@@ -443,14 +443,16 @@ async function actionClaudeStart(body: any) {
       .limit(1)
       .maybeSingle();
     if (existing) return { job_id: existing.id, resumed: true };
-    // If the weekly cron pre-ran the screen (or the tab was closed and the
-    // poller finished it), hand back that result instead of billing again.
+    // Serve the current cycle's pre-run screen instead of billing a new run.
+    // The Sunday auto-run finishes hours before the user opens the app on
+    // Monday, so this window must span the whole week (weekly cadence). If
+    // nothing ran in 8 days it falls through and starts a fresh run.
     const { data: recentDone } = await supa
       .from('claude_jobs')
       .select('id')
       .eq('kind', 'screen')
       .eq('status', 'done')
-      .gte('updated_at', new Date(Date.now() - 12 * 3600_000).toISOString())
+      .gte('updated_at', new Date(Date.now() - 8 * 86400_000).toISOString())
       .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();

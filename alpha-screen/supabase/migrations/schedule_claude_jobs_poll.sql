@@ -19,6 +19,6 @@ SELECT cron.schedule(
     timeout_milliseconds := 60000
   )
   FROM claude_jobs j
-  WHERE j.status = 'running' AND j.created_at > now() - interval '24 hours';
+  WHERE j.status = 'running' AND j.created_at > now() - interval '36 hours';
   $$
 );
