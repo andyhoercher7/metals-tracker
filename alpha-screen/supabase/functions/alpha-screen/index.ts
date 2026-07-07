@@ -186,6 +186,51 @@ async function actionFundamentals(tickers: string[]) {
 
 const MODEL = 'claude-opus-4-8';
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// POST to the Anthropic Messages API, retrying transient failures (HTTP
+// 429/5xx and overloaded_error/rate_limit_error/api_error). Anthropic returns
+// "Overloaded" when its servers are momentarily busy; a short backoff usually
+// clears it. Backoff is kept small so a synchronous call still fits the 150s
+// platform limit. Non-transient errors throw immediately.
+// deno-lint-ignore no-explicit-any
+async function anthropicMessage(payload: unknown): Promise<any> {
+  const transientTypes = new Set(['overloaded_error', 'rate_limit_error', 'api_error']);
+  let lastMsg = 'unknown error';
+  for (let i = 0; i < 5; i++) {
+    let resp: Response;
+    try {
+      resp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: anthropicHeaders(),
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      lastMsg = (e as Error).message;
+      await sleep(1000 * 2 ** i);
+      continue;
+    }
+    if (resp.status === 429 || resp.status >= 500) {
+      lastMsg = `HTTP ${resp.status}`;
+      await sleep(1000 * 2 ** i);
+      continue;
+    }
+    const data = await resp.json();
+    if (data.error) {
+      if (transientTypes.has(data.error.type)) {
+        lastMsg = data.error.message || data.error.type;
+        await sleep(1000 * 2 ** i);
+        continue;
+      }
+      throw new Error(`Anthropic API: ${data.error.message}`);
+    }
+    return data;
+  }
+  throw new Error(
+    `Anthropic API is busy right now (${lastMsg}). It auto-retried a few times — please click again in a minute.`,
+  );
+}
+
 const SELL_TRIGGER_SCHEMA = {
   type: 'object',
   additionalProperties: false,
@@ -348,28 +393,18 @@ async function callClaude(opts: {
   // Server-side web search runs a server loop that can pause (pause_turn);
   // re-send to let it resume, a few times at most.
   for (let attempt = 0; attempt < 4; attempt++) {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: opts.maxTokens ?? 16000,
-        // Adaptive thinking is powerful but slow; a synchronous call must
-        // finish inside the platform's 150s wall-clock limit, so the light
-        // per-position review path turns it off.
-        ...(opts.thinking === false ? {} : { thinking: { type: 'adaptive' } }),
-        ...(opts.system ? { system: opts.system } : {}),
-        tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: opts.maxSearches }],
-        output_config: { format: { type: 'json_schema', schema: opts.schema } },
-        messages,
-      }),
+    const data = await anthropicMessage({
+      model: MODEL,
+      max_tokens: opts.maxTokens ?? 16000,
+      // Adaptive thinking is powerful but slow; a synchronous call must
+      // finish inside the platform's 150s wall-clock limit, so the light
+      // per-position review path turns it off.
+      ...(opts.thinking === false ? {} : { thinking: { type: 'adaptive' } }),
+      ...(opts.system ? { system: opts.system } : {}),
+      tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: opts.maxSearches }],
+      output_config: { format: { type: 'json_schema', schema: opts.schema } },
+      messages,
     });
-    const data = await resp.json();
-    if (data.error) throw new Error(`Anthropic API: ${data.error.message}`);
 
     if (data.stop_reason === 'pause_turn') {
       messages.push({ role: 'assistant', content: data.content });
