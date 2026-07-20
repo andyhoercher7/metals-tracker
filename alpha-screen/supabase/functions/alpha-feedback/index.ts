@@ -225,23 +225,64 @@ Deno.serve(async (req: Request) => {
     const cohorts = scoreboard(rows, 'variant');
 
     const distinctWeeks = new Set(picks.map((p: any) => p.week_date)).size;
-    const suggestions =
-      distinctWeeks >= 8
-        ? {
-            status: 'ok',
-            weeks_of_history: distinctWeeks,
-            factor_ics: ics,
-            cohorts,
-            guidance:
-              'ICs are alpha-predictive when positive (or negative for forward_pe/debt_equity). Shift weight toward high-|IC| factors in steps of no more than 2pp per quarter. Compare cohorts on avg_alpha and hit_rate before trusting a new screening method with real money.',
-          }
-        : {
-            status: 'insufficient_history',
-            weeks_of_history: distinctWeeks,
-            weeks_required: 8,
-            factor_ics: ics,
-            cohorts,
-          };
+
+    // Build a concrete, applyable weight recommendation from the factor ICs.
+    // Raw IC factors map to the 7 tunable weight categories; we nudge weight
+    // from the worst-performing category toward the best by one small step,
+    // clamp to sane bounds, and renormalise to sum to 1. This is what the
+    // Model Feedback screen's Accept button applies.
+    const { data: cw } = await db
+      .from('factor_weights').select('*')
+      .order('effective_date', { ascending: false }).limit(1).maybeSingle();
+    const FACTOR_TO_WEIGHT: Record<string, string> = {
+      forward_pe: 'valuation_weight', roe: 'quality_weight', gross_margin: 'quality_weight',
+      eps_growth_yoy: 'earnings_growth_weight', revenue_growth: 'revenue_growth_weight',
+      debt_equity: 'balance_sheet_weight',
+      price_momentum_3m: 'momentum_weight', price_momentum_6m: 'momentum_weight',
+    };
+    const WEIGHT_KEYS = [
+      'earnings_growth_weight', 'valuation_weight', 'momentum_weight', 'quality_weight',
+      'revenue_growth_weight', 'balance_sheet_weight', 'analyst_revision_weight',
+    ];
+    let recommended_weights: Record<string, { current: number; suggested: number }> | null = null;
+    let rec_rationale = '';
+    if (cw && best && worst) {
+      const cur: Record<string, number> = {};
+      WEIGHT_KEYS.forEach((k) => { cur[k] = Number((cw as any)[k]) || 0; });
+      const upKey = FACTOR_TO_WEIGHT[best[0]];
+      const downKey = FACTOR_TO_WEIGHT[worst[0]];
+      const next = { ...cur };
+      const STEP = 0.02;
+      if (upKey && downKey && upKey !== downKey) {
+        next[upKey] = Math.min(0.40, cur[upKey] + STEP);
+        next[downKey] = Math.max(0.02, cur[downKey] - STEP);
+        rec_rationale =
+          `Shift ${(STEP * 100).toFixed(0)}pp from ${downKey.replace(/_/g, ' ')} (weakest predictor, ${worst[0]}) ` +
+          `to ${upKey.replace(/_/g, ' ')} (strongest, ${best[0]}).`;
+      } else {
+        rec_rationale = 'Best and worst factors map to the same weight bucket — no change recommended this week.';
+      }
+      const sum = WEIGHT_KEYS.reduce((s, k) => s + next[k], 0) || 1;
+      recommended_weights = {};
+      WEIGHT_KEYS.forEach((k) => {
+        recommended_weights![k] = { current: +cur[k].toFixed(4), suggested: +(next[k] / sum).toFixed(4) };
+      });
+    }
+
+    const suggestions = {
+      status: distinctWeeks >= 8 ? 'ok' : 'early',
+      weeks_of_history: distinctWeeks,
+      weeks_recommended: 8,
+      confidence: distinctWeeks >= 8 ? 'directional' : 'low',
+      factor_ics: ics,
+      cohorts,
+      recommended_weights,
+      recommendation_rationale: rec_rationale,
+      guidance:
+        'ICs are alpha-predictive when positive (or negative for forward_pe/debt_equity). ' +
+        'Recommendation shifts weight toward high-|IC| factors in a 2pp step. Sample is small — ' +
+        'treat as directional. Compare cohorts on avg_alpha and hit_rate before trusting a new method with real money.',
+    };
 
     const avgAlpha = r2(mean(rows.map((x) => x.alpha)));
     const progress = rows.map((x) => x.target_progress_pct).filter((v) => v != null) as number[];

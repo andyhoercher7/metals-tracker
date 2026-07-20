@@ -21,6 +21,27 @@ const SIGNAL_COLORS = {
   SELL: '#ef4444',
 }
 
+// One combined status per position: if a sell rule fired and you haven't
+// decided, it needs review; once you decide on Sell Signals, that decision
+// shows here too. If nothing fired, it just mirrors the weekly-review signal.
+function combineStatus(triggers, decided, reviewSignal) {
+  if (triggers.length > 0) {
+    const undecided = triggers.filter(t => !decided[t.id])
+    if (undecided.length > 0) {
+      return { label: 'Review needed', color: '#f59e0b', sub: 'a sell rule fired — decide on Sell Signals' }
+    }
+    if (triggers.some(t => decided[t.id] === 'OVERRULED_HOLD')) {
+      return { label: 'Holding (overruled)', color: '#f59e0b' }
+    }
+    const actions = triggers.map(t => t.action_on_trigger)
+    if (actions.includes('SELL_100')) return { label: 'Sell 100% (accepted)', color: '#ef4444' }
+    if (actions.includes('SELL_50')) return { label: 'Sell 50% (accepted)', color: '#ef4444' }
+    return { label: 'Reviewed · HOLD', color: '#10b981' }
+  }
+  if (reviewSignal) return { label: reviewSignal.replace(/_/g, ' '), color: SIGNAL_COLORS[reviewSignal] || '#94a3b8' }
+  return { label: '—', color: '#64748b' }
+}
+
 export default function PositionTracker() {
   const { positions, loading, error, refetch } = usePositions()
   const [reviewing, setReviewing] = useState(false)
@@ -33,23 +54,48 @@ export default function PositionTracker() {
   const [perfError, setPerfError] = useState(null)
   const [weeksByTicker, setWeeksByTicker] = useState({})
   const [signalsById, setSignalsById] = useState({})
+  const [statusById, setStatusById] = useState({})
 
-  // Load the most recent weekly-review signal for each position.
+  // Load the latest weekly-review signal AND fold in any triggered sell-rule
+  // flags + your decisions into ONE combined status per position, so the
+  // Positions tab shows the same conclusion you act on in Sell Signals.
   const loadSignals = async () => {
     if (positions.length === 0) return
     const ids = positions.map(p => p.id)
-    const { data } = await supabase
+    const tickers = positions.map(p => p.ticker)
+
+    const { data: reviews } = await supabase
       .from('weekly_position_reviews')
       .select('position_tracker_id, hold_buy_sell_signal, week_date')
       .in('position_tracker_id', ids)
       .order('week_date', { ascending: false })
-    const map = {}
-    ;(data || []).forEach(r => {
-      if (!map[r.position_tracker_id] && r.hold_buy_sell_signal) {
-        map[r.position_tracker_id] = r.hold_buy_sell_signal
-      }
+    const sig = {}
+    ;(reviews || []).forEach(r => {
+      if (!sig[r.position_tracker_id] && r.hold_buy_sell_signal) sig[r.position_tracker_id] = r.hold_buy_sell_signal
     })
-    setSignalsById(map)
+    setSignalsById(sig)
+
+    // Triggered sell-rule flags + your accept/overrule decisions.
+    const { data: trigs } = await supabase
+      .from('sell_triggers')
+      .select('id, ticker, action_on_trigger')
+      .eq('triggered', true)
+      .in('ticker', tickers)
+    const trigIds = (trigs || []).map(t => t.id)
+    const decided = {}
+    if (trigIds.length) {
+      const { data: ovr } = await supabase
+        .from('sell_trigger_overrules')
+        .select('sell_trigger_id, user_decision')
+        .in('sell_trigger_id', trigIds)
+      ;(ovr || []).forEach(o => { decided[o.sell_trigger_id] = o.user_decision })
+    }
+    const trigsByTicker = {}
+    ;(trigs || []).forEach(t => { (trigsByTicker[t.ticker] = trigsByTicker[t.ticker] || []).push(t) })
+
+    const stat = {}
+    positions.forEach(pos => { stat[pos.id] = combineStatus(trigsByTicker[pos.ticker] || [], decided, sig[pos.id]) })
+    setStatusById(stat)
   }
 
   useEffect(() => {
@@ -574,7 +620,7 @@ export default function PositionTracker() {
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
               <tr style={{ borderBottom: '1px solid #1e2a42' }}>
-                {['Ticker', 'Shares', 'Avg Cost', 'Current', 'Unreal. PnL', 'S&P 500', 'Alpha', 'Weeks', 'Thesis', 'Signal', 'Last Review'].map(h => (
+                {['Ticker', 'Shares', 'Avg Cost', 'Current', 'Unreal. PnL', 'S&P 500', 'Alpha', 'Weeks', 'Thesis', 'Signal', 'Status', 'Last Review'].map(h => (
                   <th
                     key={h}
                     style={{
@@ -656,6 +702,27 @@ export default function PositionTracker() {
                       >
                         {signalsById[pos.id].replace(/_/g, ' ')}
                       </span>
+                    ) : (
+                      <span style={{ fontSize: 12, color: '#64748b' }}>—</span>
+                    )}
+                  </td>
+                  <td style={{ padding: '12px' }}>
+                    {statusById[pos.id] ? (
+                      <div>
+                        <span
+                          style={{
+                            fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 3,
+                            background: '#0b1020',
+                            color: statusById[pos.id].color,
+                            border: `1px solid ${statusById[pos.id].color}`,
+                          }}
+                        >
+                          {statusById[pos.id].label}
+                        </span>
+                        {statusById[pos.id].sub && (
+                          <div style={{ fontSize: 10, color: '#64748b', marginTop: 3, maxWidth: 150 }}>{statusById[pos.id].sub}</div>
+                        )}
+                      </div>
                     ) : (
                       <span style={{ fontSize: 12, color: '#64748b' }}>—</span>
                     )}
