@@ -10,7 +10,7 @@
 -- claude-start returns the already-finished result within seconds.
 SELECT cron.schedule(
   'weekly-auto-screen',
-  '0 6 * * 0',
+  '0 6,8,10 * * 0',
   $$
   SELECT net.http_post(
     url := 'https://wgnhdguklxewazkfhzwe.supabase.co/functions/v1/alpha-screen',
