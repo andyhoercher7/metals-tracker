@@ -438,7 +438,10 @@ const anthropicHeaders = () => ({
 function claudeParams(kind: string, system: string, messages: unknown[], maxSearches: number) {
   return {
     model: MODEL,
-    max_tokens: 16000,
+    // A full 10-pick screen (long theses per pick) plus adaptive thinking can
+    // exceed a small budget and truncate the JSON ("hit the token limit");
+    // give the screen ample room. Reviews are small.
+    max_tokens: kind === 'screen' ? 32000 : 8000,
     thinking: { type: 'adaptive' },
     system,
     tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: maxSearches }],
