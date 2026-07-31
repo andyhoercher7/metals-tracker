@@ -74,10 +74,48 @@ export default function PortfolioAllocation({ onDecisionChange }) {
   }
 
   const rec = run?.recommendation
-  const currentByTicker = {}
-  ;(rec?.holdings_snapshot || []).forEach(h => { currentByTicker[h.ticker] = h.weight_pct })
+  const snapByTicker = {}
+  ;(rec?.holdings_snapshot || []).forEach(h => { snapByTicker[h.ticker] = h })
   const weights = [...(rec?.target_weights || [])].sort((a, b) => b.target_weight_pct - a.target_weight_pct)
   const trades = rec?.trades || []
+
+  // Turn each target weight into an exact instruction: dollars (and shares)
+  // to buy or sell to move from today's weight to the target. Moves smaller
+  // than this are noise — not worth a trade or the commission/tax friction.
+  const REBALANCE_MIN = 50
+  const totalValue = rec?.total_value || 0
+  const rows = weights.map(w => {
+    const snap = snapByTicker[w.ticker]
+    const currentValue = snap?.value_usd ?? 0
+    const targetValue = (w.target_weight_pct / 100) * totalValue
+    const delta = targetValue - currentValue
+    const price = snap?.price ?? null
+    return {
+      ...w,
+      currentPct: snap?.weight_pct ?? null,
+      currentValue,
+      delta,
+      shares: price ? Math.abs(delta) / price : null,
+      isNew: !snap,
+    }
+  })
+  // Anything held but absent from the target list is a full exit.
+  ;(rec?.holdings_snapshot || []).forEach(h => {
+    if (weights.some(w => w.ticker === h.ticker)) return
+    rows.push({
+      ticker: h.ticker,
+      conviction: 0,
+      rationale: 'Not in the target portfolio — exit the full position.',
+      target_weight_pct: 0,
+      currentPct: h.weight_pct,
+      currentValue: h.value_usd || 0,
+      delta: -(h.value_usd || 0),
+      shares: h.shares ?? null,
+      isNew: false,
+    })
+  })
+  const totalBuys = rows.filter(r => r.delta > REBALANCE_MIN).reduce((s, r) => s + r.delta, 0)
+  const totalSells = rows.filter(r => r.delta < -REBALANCE_MIN).reduce((s, r) => s - r.delta, 0)
 
   return (
     <div style={{ background: '#0f1424', border: '1px solid #253048', borderRadius: 8, padding: 16, marginBottom: 20 }}>
@@ -206,35 +244,80 @@ export default function PortfolioAllocation({ onDecisionChange }) {
             )}
           </div>
 
-          {/* Target weights */}
+          {/* Rebalance plan: exact dollars/shares to reach each target weight */}
           <div style={{ marginTop: 16 }}>
             <div style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600, marginBottom: 8 }}>
-              Target weights (conviction-ranked)
+              Rebalance plan — what to buy / sell to hit target
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {weights.map(w => {
-                const cur = currentByTicker[w.ticker]
-                const diff = cur != null ? w.target_weight_pct - cur : null
-                return (
-                  <div key={w.ticker} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' }} title={w.rationale}>
-                    <span className="font-mono" style={{ fontSize: 12, fontWeight: 700, color: '#e2e8f0', width: 52 }}>{w.ticker}</span>
-                    <span className="font-mono" style={{ fontSize: 10, color: '#64748b', width: 60 }}>conv {w.conviction}/10</span>
-                    <div style={{ flex: 1, background: '#080c17', borderRadius: 3, height: 14, position: 'relative', overflow: 'hidden' }}>
-                      <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${Math.min(100, w.target_weight_pct * 5)}%`, background: '#1a3a5f', borderRadius: 3 }} />
-                      {cur != null && (
-                        <div style={{ position: 'absolute', left: `${Math.min(100, cur * 5)}%`, top: 0, bottom: 0, width: 2, background: '#f59e0b' }} title={`current ${cur}%`} />
-                      )}
-                    </div>
-                    <span className="font-mono" style={{ fontSize: 12, color: '#60a5fa', width: 46, textAlign: 'right' }}>{w.target_weight_pct}%</span>
-                    <span className="font-mono" style={{ fontSize: 10, color: diff == null ? '#64748b' : diff > 0.5 ? '#10b981' : diff < -0.5 ? '#ef4444' : '#64748b', width: 60, textAlign: 'right' }}>
-                      {cur != null ? `now ${cur}%` : 'new'}
-                    </span>
-                  </div>
-                )
-              })}
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid #1e2a42' }}>
+                    {['Ticker', 'Conviction', 'Now', 'Target', '', 'Buy / Sell'].map((h, i) => (
+                      <th key={i} style={{ textAlign: i >= 2 ? 'right' : 'left', padding: '6px 8px', fontSize: 10, color: '#64748b', textTransform: 'uppercase', letterSpacing: 1, fontWeight: 600 }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => {
+                    const buy = r.delta > REBALANCE_MIN
+                    const sell = r.delta < -REBALANCE_MIN
+                    const actionColor = buy ? '#10b981' : sell ? '#ef4444' : '#64748b'
+                    return (
+                      <tr key={r.ticker} style={{ borderBottom: '1px solid #131c30' }} title={r.rationale}>
+                        <td className="font-mono" style={{ padding: '7px 8px', fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>
+                          {r.ticker}
+                          {r.isNew && <span style={{ fontSize: 9, color: '#10b981', marginLeft: 5 }}>NEW</span>}
+                        </td>
+                        <td className="font-mono" style={{ padding: '7px 8px', fontSize: 11, color: '#64748b' }}>
+                          {r.conviction ? `${r.conviction}/10` : '—'}
+                        </td>
+                        <td className="font-mono" style={{ padding: '7px 8px', fontSize: 11, color: '#94a3b8', textAlign: 'right' }}>
+                          {r.currentPct != null ? `${r.currentPct}%` : '—'}
+                        </td>
+                        <td className="font-mono" style={{ padding: '7px 8px', fontSize: 12, color: '#60a5fa', textAlign: 'right', fontWeight: 600 }}>
+                          {r.target_weight_pct}%
+                        </td>
+                        <td style={{ padding: '7px 8px', width: 90 }}>
+                          <div style={{ background: '#080c17', borderRadius: 3, height: 10, position: 'relative', overflow: 'hidden' }}>
+                            <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${Math.min(100, r.target_weight_pct * 5)}%`, background: '#1a3a5f' }} />
+                            {r.currentPct != null && (
+                              <div style={{ position: 'absolute', left: `${Math.min(100, r.currentPct * 5)}%`, top: 0, bottom: 0, width: 2, background: '#f59e0b' }} />
+                            )}
+                          </div>
+                        </td>
+                        <td className="font-mono" style={{ padding: '7px 8px', fontSize: 12, color: actionColor, textAlign: 'right', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          {buy || sell ? (
+                            <>
+                              {buy ? 'BUY ' : 'SELL '}${Math.round(Math.abs(r.delta)).toLocaleString()}
+                              {r.shares != null && (
+                                <span style={{ color: '#64748b', fontWeight: 400, marginLeft: 6 }}>
+                                  ~{r.shares.toFixed(2)} sh
+                                </span>
+                              )}
+                            </>
+                          ) : (
+                            <span style={{ color: '#64748b', fontWeight: 400 }}>on target</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ display: 'flex', gap: 16, marginTop: 10, fontSize: 11, flexWrap: 'wrap' }}>
+              <span style={{ color: '#10b981' }}>Total to buy: ${Math.round(totalBuys).toLocaleString()}</span>
+              <span style={{ color: '#ef4444' }}>Total to sell: ${Math.round(totalSells).toLocaleString()}</span>
+              <span style={{ color: '#64748b' }}>
+                Portfolio ${Math.round(totalValue).toLocaleString()} · buys and sells offset, so no new cash is needed.
+              </span>
             </div>
             <div style={{ fontSize: 10, color: '#64748b', marginTop: 6 }}>
-              Blue bar = target · yellow line = where you are today. Hover a row for the model's one-line rationale.
+              Share counts use the prices from when this ran — round to whole shares if your broker requires it. Moves under
+              ${REBALANCE_MIN} are shown as "on target" (not worth the friction). Hover a row for the model's reasoning.
             </div>
           </div>
         </>

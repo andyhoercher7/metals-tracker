@@ -322,6 +322,10 @@ async function actionRecommend(force: boolean) {
     return {
       ticker: h.pos.ticker,
       value_usd: h.value,
+      // Price and share count let the app turn a target weight into an exact
+      // "buy/sell $X (~N shares)" instruction.
+      price: h.price,
+      shares: h.pos.shares_held,
       weight_pct: h.value != null ? +((h.value / totalValue) * 100).toFixed(1) : null,
       unrealized_pnl_pct: h.pos.unrealized_pnl_pct,
       weeks_held: h.pos.weeks_held,
