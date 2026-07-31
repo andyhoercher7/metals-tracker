@@ -6,6 +6,7 @@ import { evaluateSellRules } from '../lib/sellRules'
 import { usePositions } from '../hooks/usePositions'
 import { fetchQuotes, fetchHistoricalOpens, fetchTickerAudit } from '../lib/prices'
 import { computePerformance } from '../lib/portfolio'
+import PortfolioAllocation from './PortfolioAllocation'
 
 const THESIS_COLORS = {
   INTACT: '#10b981',
@@ -24,7 +25,18 @@ const SIGNAL_COLORS = {
 // One combined status per position: if a sell rule fired and you haven't
 // decided, it needs review; once you decide on Sell Signals, that decision
 // shows here too. If nothing fired, it just mirrors the weekly-review signal.
-function combineStatus(triggers, decided, reviewSignal) {
+function combineStatus(triggers, decided, reviewSignal, allocAction) {
+  // An accepted allocation trade is the strongest, most recent decision —
+  // it overrides sell-rule and review status so all tabs tell one story.
+  if (allocAction === 'SELL_ALL') {
+    return { label: 'Swap out (accepted)', color: '#ef4444', sub: 'sell recommended by allocation — log the trade when done' }
+  }
+  if (allocAction === 'TRIM') {
+    return { label: 'Trim (accepted)', color: '#f59e0b', sub: 'partial sell per allocation — log the trade when done' }
+  }
+  if (allocAction === 'ADD') {
+    return { label: 'Add (accepted)', color: '#3b82f6', sub: 'buy more per allocation — log the trade when done' }
+  }
   if (triggers.length > 0) {
     const undecided = triggers.filter(t => !decided[t.id])
     if (undecided.length > 0) {
@@ -93,8 +105,29 @@ export default function PositionTracker() {
     const trigsByTicker = {}
     ;(trigs || []).forEach(t => { (trigsByTicker[t.ticker] = trigsByTicker[t.ticker] || []).push(t) })
 
+    // Accepted trades from the latest allocation run flow into Status too.
+    const allocByTicker = {}
+    const { data: runs } = await supabase
+      .from('allocation_runs')
+      .select('id, recommendation')
+      .eq('status', 'done')
+      .order('created_at', { ascending: false })
+      .limit(1)
+    const latestRun = runs?.[0]
+    if (latestRun) {
+      const { data: dec } = await supabase
+        .from('allocation_decisions')
+        .select('trade_key, decision')
+        .eq('run_id', latestRun.id)
+      ;(dec || []).forEach(d => {
+        if (d.decision !== 'accepted') return
+        const [action, ticker] = d.trade_key.split(':')
+        if (['SELL_ALL', 'TRIM', 'ADD'].includes(action)) allocByTicker[ticker] = action
+      })
+    }
+
     const stat = {}
-    positions.forEach(pos => { stat[pos.id] = combineStatus(trigsByTicker[pos.ticker] || [], decided, sig[pos.id]) })
+    positions.forEach(pos => { stat[pos.id] = combineStatus(trigsByTicker[pos.ticker] || [], decided, sig[pos.id], allocByTicker[pos.ticker]) })
     setStatusById(stat)
   }
 
@@ -544,6 +577,9 @@ export default function PositionTracker() {
           Performance/benchmark data unavailable: {perfError}
         </div>
       )}
+
+      {/* Weekly conviction-weighted allocation (auto-runs Sundays) */}
+      <PortfolioAllocation onDecisionChange={loadSignals} />
 
       {lastPriceUpdate && (
         <div style={{ fontSize: 11, color: '#64748b', marginBottom: 12, fontFamily: 'IBM Plex Mono' }}>
