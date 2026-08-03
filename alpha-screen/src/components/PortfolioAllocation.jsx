@@ -117,6 +117,7 @@ export default function PortfolioAllocation({ onDecisionChange }) {
       delta: -(h.value_usd || 0),
       shares: h.shares ?? null,
       isNew: false,
+      pending: pendingSell.has(h.ticker),
     })
   })
   const totalBuys = rows.filter(r => r.delta > REBALANCE_MIN).reduce((s, r) => s + r.delta, 0)
