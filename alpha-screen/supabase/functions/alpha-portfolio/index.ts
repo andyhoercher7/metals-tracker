@@ -257,7 +257,51 @@ function enforceWeights(weights: Weight[]): Weight[] {
   return out;
 }
 
-function enforceTrades(trades: Trade[], heldTickers: Set<string>): Trade[] {
+// A sell rule that has FIRED and that the user has not yet ruled on is an
+// open question about cutting the position. Adding to it in the same week
+// answers that question for them, in the opposite direction — so the model
+// is not permitted to raise the target weight or emit a buy for those names
+// until the user decides on the Sell Signals tab. Holding or trimming is
+// still allowed. This is enforced in code because a prompt rule alone was
+// not honored: a run that was shown "FLAT_8_WEEKS fired — undecided" for
+// META still recommended buying more of it.
+function enforcePendingSellRules(
+  weights: Weight[],
+  pending: Set<string>,
+  currentPct: Record<string, number>,
+): Weight[] {
+  if (pending.size === 0) return weights;
+  const out = weights.map((w) => ({ ...w }));
+  let freed = 0;
+  out.forEach((w) => {
+    if (!pending.has(w.ticker)) return;
+    const now = currentPct[w.ticker] ?? 0;
+    if (w.target_weight_pct > now) {
+      freed += w.target_weight_pct - now;
+      w.target_weight_pct = now;
+    }
+  });
+  if (freed > 0) {
+    // Give the freed weight to names with no pending question, respecting
+    // the 20% single-name cap.
+    const eligible = out.filter((w) => !pending.has(w.ticker) && w.target_weight_pct < MAX_WEIGHT);
+    const base = eligible.reduce((s, w) => s + w.target_weight_pct, 0);
+    if (base > 0) {
+      eligible.forEach((w) => {
+        w.target_weight_pct = Math.min(MAX_WEIGHT, w.target_weight_pct + freed * (w.target_weight_pct / base));
+      });
+    }
+  }
+  out.forEach((w) => { w.target_weight_pct = +w.target_weight_pct.toFixed(1); });
+  return out;
+}
+
+function enforceTrades(trades: Trade[], heldTickers: Set<string>, pending: Set<string>): Trade[] {
+  // Never buy into an unresolved sell signal (see enforcePendingSellRules).
+  trades = trades.filter(
+    (t) => !(pending.has(t.ticker) && (t.action === 'ADD' || t.action === 'BUY_NEW')),
+  );
+
   let out = trades
     .map((t) => ({ ...t, dollars: Math.round(Math.abs(t.dollars)) }))
     .filter((t) => t.dollars >= MIN_TRADE_DOLLARS);
@@ -359,7 +403,8 @@ HARD RULES (violations will be corrected by code, so just follow them):
 4. Conviction drives weight: score every kept holding 1-10; higher conviction gets higher target weight (subject to the 20% cap). Weights sum to ~100 and cover every kept position.
 5. THE REPLACEMENT BAR: a new pick enters ONLY by replacing a current holding it CLEARLY beats on 12-month risk-adjusted outlook — meaningfully higher expected return or the incumbent's thesis is impaired. Ties or marginal edges go to the incumbent (it has history, known behavior, and swapping costs taxes). If nothing clears the bar, return an empty trades array and say why in no_trade_reason.
 6. Churn discipline: at most 3 swaps per week, no trades under $150, and remember sells of winners create taxable gains — a swap must be worth that drag.
-7. Respect the user's recorded decisions: if a sell rule fired and the user chose to hold (overruled), do not recommend exiting that name this week unless something is materially broken beyond what they already saw.
+7. PENDING SELL SIGNALS OUTRANK YOUR VIEW. If a holding shows a sell rule marked "undecided", the user has an open question about CUTTING that position. You may hold or trim it, but you must NEVER add to it or raise its target weight above its current weight — buying more would answer their question for them, in the opposite direction. Say so plainly in the rationale ("sell signal pending — no adds until you decide").
+8. Respect decisions already made: if a fired rule shows "user decided: ACCEPTED/OVERRULED", honor that and do not re-litigate it this week unless something materially new is broken.
 
 Weigh: each holding's latest weekly review (signal, thesis status), momentum vs entry, weeks held, and each candidate's composite score, upside to target, and probability of doubling. Be decisive but honest — most weeks the right answer is few or zero trades.`;
 
@@ -376,13 +421,29 @@ Produce this week's allocation: conviction + target weight for every kept holdin
   const weekDate = new Date().toISOString().slice(0, 10);
   try {
     const raw = await callClaude(system, userContent);
-    const weights = enforceWeights((raw.target_weights || []) as Weight[]);
-    const trades = enforceTrades((raw.trades || []) as Trade[], heldTickers);
+    // Tickers with a fired-but-undecided sell rule: the model may not add to
+    // these, whatever it proposed.
+    const pending = new Set(
+      Object.entries(rulesByTicker)
+        .filter(([, notes]) => notes.some((n) => n.includes('undecided')))
+        .map(([ticker]) => ticker),
+    );
+    const currentPct: Record<string, number> = {};
+    holdingsData.forEach((h) => { currentPct[h.ticker] = h.weight_pct ?? 0; });
+    const weights = enforcePendingSellRules(
+      enforceWeights((raw.target_weights || []) as Weight[]),
+      pending,
+      currentPct,
+    );
+    const trades = enforceTrades((raw.trades || []) as Trade[], heldTickers, pending);
     const recommendation = {
       summary: raw.summary,
       no_trade_reason: raw.no_trade_reason ?? null,
       target_weights: weights,
       trades,
+      // Surfaced in the app so a pending sell signal is visible on the row
+      // instead of silently contradicting the Sell Signals tab.
+      pending_sell_tickers: [...pending],
       holdings_snapshot: holdingsData,
       total_value: +totalValue.toFixed(2),
       candidates_considered: candidatesData.map((c) => c.ticker),

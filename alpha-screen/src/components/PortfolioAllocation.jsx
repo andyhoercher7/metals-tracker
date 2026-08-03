@@ -84,6 +84,10 @@ export default function PortfolioAllocation({ onDecisionChange }) {
   // than this are noise — not worth a trade or the commission/tax friction.
   const REBALANCE_MIN = 50
   const totalValue = rec?.total_value || 0
+  // Names with a fired sell rule you haven't ruled on yet. The model is not
+  // allowed to add to these, and the row says so — a buy here would silently
+  // contradict the Sell Signals tab.
+  const pendingSell = new Set(rec?.pending_sell_tickers || [])
   const rows = weights.map(w => {
     const snap = snapByTicker[w.ticker]
     const currentValue = snap?.value_usd ?? 0
@@ -97,6 +101,7 @@ export default function PortfolioAllocation({ onDecisionChange }) {
       delta,
       shares: price ? Math.abs(delta) / price : null,
       isNew: !snap,
+      pending: pendingSell.has(w.ticker),
     }
   })
   // Anything held but absent from the target list is a full exit.
@@ -169,6 +174,14 @@ export default function PortfolioAllocation({ onDecisionChange }) {
         </div>
       ) : (
         <>
+          {pendingSell.size > 0 && (
+            <div style={{ background: '#1a1505', border: '1px solid #f59e0b', borderRadius: 6, padding: 10, color: '#f59e0b', fontSize: 12, marginTop: 12 }}>
+              ⚠ {[...pendingSell].join(', ')} {pendingSell.size === 1 ? 'has' : 'have'} a sell signal you
+              haven't decided on yet. The allocation will not add to {pendingSell.size === 1 ? 'it' : 'them'} —
+              settle the signal on the Sell Signals tab first, then re-run this.
+            </div>
+          )}
+
           {rec?.summary && (
             <div style={{ fontSize: 13, color: '#cbd5e1', lineHeight: 1.6, marginTop: 12, background: '#0b1020', border: '1px solid #1e2a42', borderRadius: 6, padding: 12 }}>
               {rec.summary}
@@ -270,6 +283,11 @@ export default function PortfolioAllocation({ onDecisionChange }) {
                         <td className="font-mono" style={{ padding: '7px 8px', fontSize: 12, fontWeight: 700, color: '#e2e8f0' }}>
                           {r.ticker}
                           {r.isNew && <span style={{ fontSize: 9, color: '#10b981', marginLeft: 5 }}>NEW</span>}
+                          {r.pending && (
+                            <div style={{ fontSize: 9, color: '#f59e0b', fontWeight: 600, marginTop: 2 }}>
+                              ⚠ SELL SIGNAL PENDING
+                            </div>
+                          )}
                         </td>
                         <td className="font-mono" style={{ padding: '7px 8px', fontSize: 11, color: '#64748b' }}>
                           {r.conviction ? `${r.conviction}/10` : '—'}
