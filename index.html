@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0f0f0f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Asset Tracker">
 <title>Asset Tracker</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
@@ -127,6 +130,30 @@ tr:hover td{background:#1e1e1e}
   .portfolio-total{font-size:1.25rem}
   #content{padding:10px}
   td,th{padding:7px 9px}
+}
+/* Phone layout: a wide table is unusable on a 400px screen, so each row
+   becomes a card with its own labels. Same markup, no second render path. */
+@media(max-width:720px){
+  .tbl-wrap{overflow-x:visible}
+  table{border:none;background:none}
+  thead{display:none}
+  tbody,tr,td{display:block;width:100%}
+  tr{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;padding:6px 4px}
+  tr:hover td{background:none}
+  td{border:none;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 10px;text-align:right}
+  td::before{content:attr(data-label);color:#888;font-size:.7rem;text-transform:uppercase;letter-spacing:.3px;text-align:left;flex-shrink:0}
+  td.cell-item{font-weight:600;font-size:.95rem}
+  td.cell-item::before{align-self:flex-start}
+  td.cell-item .item-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+  td.no-photo{display:none}
+  .acts{justify-content:flex-end;width:100%}
+  .basis{text-align:right}
+  .summary-grid{grid-template-columns:1fr 1fr;gap:10px}
+  .spot-prices{gap:10px;order:3;width:100%;justify-content:space-between}
+  .hbtns{order:2}
+}
+@media(max-width:400px){
+  .summary-grid{grid-template-columns:1fr}
 }
 /* Printable schedule of assets — for insurance or estate records */
 @media print{
@@ -527,15 +554,15 @@ function renderTable() {
     const metalBadge = isM && e.metal ? ' <span class="badge '+esc(e.metal)+'">'+esc(e.metal)+'</span>' : '';
     const staleTag = isStale(e) ? '<div class="stale">&#9888; revalue</div>' : '';
     const src = e.value_source || e.dealer || '-';
-    return '<tr><td>'+ph+'</td><td>'+(e.entry_date||'-')+'</td>'
-      +'<td><span class="badge cat">'+esc(cat)+'</span>'+metalBadge+'</td>'
-      +'<td>'+esc(e.product||'-')+detailSummary(e)+'</td>'
-      +'<td>'+qty+'</td>'
-      +'<td>'+(cost?'$'+f2(cost):'-')+'</td>'
-      +'<td>'+(val>0?'$'+f2(val):'-')+'</td>'
-      +'<td><div class="basis">'+basisLabel(e)+'</div>'+staleTag+'</td>'
-      +'<td>'+gs+'</td>'
-      +'<td>'+esc(src)+'</td>'
+    return '<tr><td data-label="Photo" class="'+(e.photo_url?'':'no-photo')+'">'+ph+'</td><td data-label="Date">'+(e.entry_date||'-')+'</td>'
+      +'<td data-label="Category"><span class="badge cat">'+esc(cat)+'</span>'+metalBadge+'</td>'
+      +'<td data-label="Item" class="cell-item"><div class="item-wrap">'+esc(e.product||'-')+detailSummary(e)+'</div></td>'
+      +'<td data-label="Qty">'+qty+'</td>'
+      +'<td data-label="Paid">'+(cost?'$'+f2(cost):'-')+'</td>'
+      +'<td data-label="Est. Value">'+(val>0?'$'+f2(val):'-')+'</td>'
+      +'<td data-label="Valued By"><div><div class="basis">'+basisLabel(e)+'</div>'+staleTag+'</div></td>'
+      +'<td data-label="Gain/Loss">'+gs+'</td>'
+      +'<td data-label="Source">'+esc(src)+'</td>'
       +'<td class="acts-col"><div class="acts">'
       +'<button class="btn btn-secondary btn-sm" onclick="openEdit(\''+e.id+'\')">Edit</button>'
       +'<button class="btn btn-danger btn-sm" onclick="delEntry(\''+e.id+'\')">Del</button>'
