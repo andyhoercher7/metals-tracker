@@ -50,8 +50,6 @@ header{background:var(--surface);border-bottom:1px solid var(--border);padding:1
 .prem-row textarea{width:100%;min-height:48px;font-size:.8rem;resize:vertical;line-height:1.45}
 .prem-asof{color:#777;font-size:.72rem;margin-top:6px}
 .prem-tag{color:var(--amber);font-weight:600}
-.warn-prem{color:var(--amber)}
-.muted-prem{color:#888}
 .spot-prices{display:flex;gap:14px;flex-wrap:wrap;font-size:.78rem}
 .spot-item{display:flex;flex-direction:column;align-items:center}
 .spot-label{color:#888;font-size:.65rem;text-transform:uppercase}
@@ -229,7 +227,7 @@ tr:hover td{background:#1e1e1e}
         <thead><tr>
           <th>Photo</th><th>Date</th><th>Category</th><th>Item</th>
           <th>Qty</th><th>Paid</th><th>Est. Value</th><th>Valued By</th>
-          <th>Gain/Loss</th><th>Over Melt</th><th>Source</th><th class="acts-col">Actions</th>
+          <th>Gain/Loss</th><th>Source</th><th class="acts-col">Actions</th>
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
@@ -497,13 +495,10 @@ function entryValue(e) {
   if (m === 'cost') return parseFloat(e.cost)||0;
   return (parseFloat(e.quantity)||1) * (parseFloat(e.value_each)||0);
 }
-// ── Premium over spot ───────────────────────────────────────────────────────
-// What you paid versus what the metal in the item is worth at TODAY's spot.
-// This is the number that separates "the metal moved" from "I paid over the
-// odds": melt is weight x live spot, never a stored dealer price, so a dealer
-// price entered on an item changes its value but never hides its premium.
-// Non-metal items have no spot to compare against, so they report nothing.
-const PREMIUM_WARN = 25;   // percent over melt worth flagging
+// ── Melt comparison (CSV only) ──────────────────────────────────────────────
+// Melt is weight x live spot, never a stored dealer price. This no longer
+// appears on screen; it survives in the CSV export, where an insurance or
+// estate record benefits from showing raw metal value alongside the estimate.
 function premiumOverSpot(e) {
   const cat = e.category || 'Precious Metals';
   if (!(catByName[cat]||{}).is_metal) return null;
@@ -578,15 +573,13 @@ function renderSummary() {
   }
 
   // Totals + how trustworthy they are
-  let tv=0, tc=0, live=0, manual=0, atCost=0, nStale=0, prem=0, premCost=0;
+  let tv=0, tc=0, live=0, manual=0, atCost=0, nStale=0;
   entries.forEach(e => {
     const v = entryValue(e);
     tv += v; tc += parseFloat(e.cost)||0;
     const m = e.valuation_method || 'spot';
     if (m==='spot') live += v; else if (m==='cost') atCost += v; else manual += v;
     if (isStale(e)) nStale++;
-    const p = premiumOverSpot(e);
-    if (p) { prem += p.abs; premCost += p.melt; }
   });
   document.getElementById('ptotal').textContent = '$'+f2(tv);
   const ge = document.getElementById('pgain');
@@ -602,30 +595,10 @@ function renderSummary() {
     ['Held at cost', '$'+f2(atCost), false],
   ];
   if (nStale) chips.push(['Needs revaluing', nStale+(nStale===1?' item':' items'), true]);
-  // Premium is money already spent above the metal, so it belongs next to the
-  // total rather than buried per row.
-  if (premCost > 0 && Math.abs(prem) >= 0.005) {
-    const pc = (prem/premCost*100).toFixed(0);
-    chips.push([prem>=0 ? 'Premium paid over melt' : 'Bought under melt',
-                (prem>=0?'+':'-')+'$'+f2(Math.abs(prem))+' ('+(prem>=0?'+':'-')+Math.abs(pc)+'%)',
-                prem/premCost*100 >= PREMIUM_WARN]);
-  }
   document.getElementById('bstrip').innerHTML = chips
     .filter(c => c[1] !== '$0.00')
     .map(c => '<div class="basis-chip'+(c[2]?' warn':'')+'"><span class="bl">'+c[0]+'</span><span class="bv">'+c[1]+'</span></div>')
     .join('');
-}
-
-// Over melt is shown in amber past PREMIUM_WARN, because a big premium is a
-// fact to notice, not an error - fractional gold and graded coins carry one by
-// nature. Under melt is a straight win and reads green.
-function premiumCell(e) {
-  const p = premiumOverSpot(e);
-  if (!p) return '-';
-  const sign = p.abs >= 0 ? '+' : '-';
-  const cls = p.abs < 0 ? 'pos' : (p.pct >= PREMIUM_WARN ? 'warn-prem' : 'muted-prem');
-  return '<span class="'+cls+'">'+sign+'$'+f2(Math.abs(p.abs))
-       + ' <small>('+sign+p.pct.toFixed(0)+'%)</small></span>';
 }
 
 function renderTable() {
@@ -659,7 +632,6 @@ function renderTable() {
       +'<td data-label="Est. Value">'+(val>0?'$'+f2(val):'-')+'</td>'
       +'<td data-label="Valued By"><div><div class="basis">'+basisLabel(e)+'</div>'+staleTag+'</div></td>'
       +'<td data-label="Gain/Loss">'+gs+'</td>'
-      +'<td data-label="Over Melt">'+premiumCell(e)+'</td>'
       +'<td data-label="Source">'+esc(src)+'</td>'
       +'<td class="acts-col"><div class="acts">'
       +'<button class="btn btn-secondary btn-sm" onclick="openEdit(\''+e.id+'\')">Edit</button>'
