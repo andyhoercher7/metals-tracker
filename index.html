@@ -104,11 +104,22 @@ tr:hover td{background:#1e1e1e}
 .badge.palladium{background:#1a1a1a;color:var(--palladium)}
 .badge.cat{background:#1e2430;color:#9ab}
 .basis{font-size:.7rem;color:#888;white-space:nowrap}
+.spot-prem{color:var(--amber);font-size:.7rem;font-weight:600;margin-left:3px}
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap}
+th.sortable:hover{color:var(--gold)}
+th.sortable::after{content:'';opacity:.35;font-size:.7rem;margin-left:4px}
+th.sort-asc::after{content:'\2191';opacity:1;color:var(--gold)}
+th.sort-desc::after{content:'\2193';opacity:1;color:var(--gold)}
+#assets-table.hide-cat th#th-cat,#assets-table.hide-cat td[data-label="Category"]{display:none}
+.item-name{display:block}
+td[data-label="Date"]{white-space:nowrap}
+.item-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:3px}
+.item-meta:empty{display:none}
 .basis b{color:#bbb;font-weight:600}
 .stale{color:var(--amber);font-size:.7rem;white-space:nowrap}
 .acts{display:flex;gap:5px}
-.thumb{width:34px;height:34px;border-radius:6px;object-fit:cover;cursor:pointer;border:1px solid var(--border)}
-.nophoto{width:34px;height:34px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:#444;font-size:.65rem}
+.thumb{width:48px;height:48px;border-radius:6px;object-fit:cover;cursor:pointer;border:1px solid var(--border)}
+.nophoto{width:48px;height:48px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:#444;font-size:.65rem}
 .empty{text-align:center;padding:50px 20px;color:#555}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:center;justify-content:center;padding:16px}
 .modal-overlay.open{display:flex}
@@ -144,19 +155,51 @@ tr:hover td{background:#1e1e1e}
 }
 /* Phone layout: a wide table is unusable on a 400px screen, so each row
    becomes a card with its own labels. Same markup, no second render path. */
+/* Phone: each row collapses to photo, name, value and gain - the four things
+   you scan for - and the rest opens on tap. A full labelled row per field made
+   a 42-item list seventeen screens long. Same markup either way; only the
+   layout changes. */
 @media(max-width:720px){
   .tbl-wrap{overflow-x:visible}
   table{border:none;background:none}
   thead{display:none}
-  tbody,tr,td{display:block;width:100%}
-  tr{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;padding:6px 4px}
+  tbody{display:block;width:100%}
+  tr{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;
+     column-gap:10px;background:var(--surface);border:1px solid var(--border);
+     border-radius:12px;margin-bottom:8px;padding:10px;cursor:pointer}
   tr:hover td{background:none}
-  td{border:none;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 10px;text-align:right}
-  td::before{content:attr(data-label);color:#888;font-size:.7rem;text-transform:uppercase;letter-spacing:.3px;text-align:left;flex-shrink:0}
-  td.cell-item{font-weight:600;font-size:.95rem}
-  td.cell-item::before{align-self:flex-start}
-  td.cell-item .item-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
-  td.no-photo{display:none}
+  td{border:none;display:flex;justify-content:space-between;align-items:center;gap:12px;
+     padding:0;text-align:right;min-width:0}
+  td::before{content:attr(data-label);color:#888;font-size:.7rem;text-transform:uppercase;
+     letter-spacing:.3px;text-align:left;flex-shrink:0}
+
+  /* Always visible */
+  td[data-label="Photo"]{grid-column:1;grid-row:1/span 2;align-self:start}
+  td[data-label="Photo"]::before{display:none}
+  td.cell-item{grid-column:2;grid-row:1;font-weight:600;font-size:.92rem;text-align:left}
+  td.cell-item::before{display:none}
+  td.cell-item .item-wrap{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0}
+  .item-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
+     overflow:hidden;line-height:1.3}
+  td.cell-value{grid-column:3;grid-row:1;justify-content:flex-end;font-weight:600;white-space:nowrap}
+  td.cell-value::before{display:none}
+  td[data-label="Date"]{grid-column:2;grid-row:2;justify-content:flex-start;
+     color:#888;font-size:.72rem;padding-top:2px}
+  td[data-label="Date"]::before{display:none}
+  td.cell-gain{grid-column:3;grid-row:2;justify-content:flex-end;font-size:.78rem;
+     white-space:nowrap;padding-top:2px}
+  td.cell-gain::before{display:none}
+
+  /* Opens on tap */
+  td[data-label="Category"],td[data-label="Qty"],td[data-label="Paid"],
+  td[data-label="Valued By"],td[data-label="Source"],td.acts-col{
+     grid-column:1/-1;display:none;padding:5px 2px}
+  tr.open td[data-label="Category"],tr.open td[data-label="Qty"],tr.open td[data-label="Paid"],
+  tr.open td[data-label="Valued By"],tr.open td[data-label="Source"],tr.open td.acts-col{display:flex}
+  tr.open td[data-label="Category"]{margin-top:8px;border-top:1px solid var(--border);padding-top:10px}
+  #assets-table.hide-cat tr.open td[data-label="Qty"]{margin-top:8px;
+     border-top:1px solid var(--border);padding-top:10px}
+
   .acts{justify-content:flex-end;width:100%}
   .basis{text-align:right}
   .summary-grid{grid-template-columns:1fr 1fr;gap:10px}
@@ -223,11 +266,18 @@ tr:hover td{background:#1e1e1e}
       <button class="btn btn-secondary btn-sm" onclick="openInv()">&#128203; Paste Invoice</button>
     </div>
     <div class="tbl-wrap">
-      <table>
+      <table id="assets-table">
         <thead><tr>
-          <th>Photo</th><th>Date</th><th>Category</th><th>Item</th>
-          <th>Qty</th><th>Paid</th><th>Est. Value</th><th>Valued By</th>
-          <th>Gain/Loss</th><th>Source</th><th class="acts-col">Actions</th>
+          <th>Photo</th>
+          <th class="sortable" onclick="setSort('entry_date')" id="th-entry_date">Date</th>
+          <th id="th-cat">Category</th>
+          <th class="sortable" onclick="setSort('product')" id="th-product">Item</th>
+          <th class="sortable" onclick="setSort('qty')" id="th-qty">Qty</th>
+          <th class="sortable" onclick="setSort('cost')" id="th-cost">Paid</th>
+          <th class="sortable" onclick="setSort('value')" id="th-value">Est. Value</th>
+          <th>Valued By</th>
+          <th class="sortable" onclick="setSort('gain')" id="th-gain">Gain/Loss</th>
+          <th>Source</th><th class="acts-col">Actions</th>
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
@@ -377,6 +427,7 @@ const METALS = ['gold','silver','copper','platinum','palladium'];
 const STALE_DAYS = 365;
 
 let user=null, entries=[], cats=[], catByName={}, premiums={}, tab='all', editId=null,
+    sortKey='entry_date', sortDir=-1,
     spotPrices={}, pendingPhoto=null, existingPhoto=null, invItems=[];
 
 async function doLogin() {
@@ -454,9 +505,12 @@ async function refreshPrices() {
 function renderSpots() {
   const sp = document.getElementById('spots');
   const sy = {gold:'Au',silver:'Ag',platinum:'Pt',palladium:'Pd',copper:'Cu'};
-  const items = METALS.filter(m=>spotPrices[m]).map(m =>
-    '<div class="spot-item"><span class="spot-label">'+sy[m]+'</span><span class="spot-value">$'+f2(spotPrices[m])+'</span></div>'
-  ).join('');
+  const items = METALS.filter(m=>spotPrices[m]).map(m => {
+    const pp = premiumPct(m);
+    return '<div class="spot-item"><span class="spot-label">'+sy[m]+'</span>'
+      + '<span class="spot-value">$'+f2(spotPrices[m])+'</span>'
+      + (pp ? '<span class="spot-prem">+'+(+pp.toFixed(1))+'%</span>' : '') + '</div>';
+  }).join('');
   sp.innerHTML = items || '<span style="color:#555;font-size:.78rem">Prices unavailable</span>';
 }
 
@@ -520,8 +574,7 @@ function basisLabel(e) {
   const m = e.valuation_method || 'spot';
   if (m === 'spot') {
     if (parseFloat(e.mkt_price_per_oz)) return '<b>Dealer price</b>';
-    const pp = premiumPct(e.metal);
-    return '<b>Spot</b>' + (pp ? ' <span class="prem-tag">+'+(+pp.toFixed(1))+'%</span>' : '');
+    return '<b>Spot</b>';
   }
   if (m === 'cost') return '<b>Cost paid</b>';
   const when = e.value_as_of ? ' &middot; ' + e.value_as_of : '';
@@ -532,15 +585,40 @@ function filtered() {
   let l = tab==='all' ? entries : entries.filter(e => (e.category||'Precious Metals') === tab);
   const q = document.getElementById('q').value.toLowerCase();
   if (q) l = l.filter(e => ((e.product||'')+' '+(e.dealer||'')+' '+(e.note||'')+' '+(e.value_source||'')+' '+JSON.stringify(e.details||{})).toLowerCase().includes(q));
-  return l;
+  return sorted(l);
 }
 
-function renderSummary() {
-  // Per-metal cards while viewing bullion, per-category cards otherwise.
-  const sg = document.getElementById('sgrid');
-  if (tab === 'Precious Metals') {
-    sg.innerHTML = METALS.map(m => {
-      const me = entries.filter(e=>e.metal===m && (e.category||'Precious Metals')==='Precious Metals');
+// With 42 items you cannot answer "what is my biggest holding" by reading, so
+// the money columns sort. Computed columns (value, gain) sort on the same
+// numbers the row displays, not on a stored field.
+const SORT_VALUE = {
+  entry_date: e => e.entry_date || '',
+  product:    e => (e.product||'').toLowerCase(),
+  qty:        e => parseFloat(e.oz) || parseFloat(e.quantity) || 0,
+  cost:       e => parseFloat(e.cost) || 0,
+  value:      e => entryValue(e),
+  gain:       e => entryValue(e) - (parseFloat(e.cost)||0),
+};
+function sorted(list) {
+  const get = SORT_VALUE[sortKey] || SORT_VALUE.entry_date;
+  return list.slice().sort((a,b) => {
+    const x = get(a), y = get(b);
+    if (x < y) return -sortDir;
+    if (x > y) return sortDir;
+    return 0;
+  });
+}
+function setSort(key) {
+  // Same column again flips direction; a new column starts descending, which
+  // is what you want first for money and dates.
+  if (sortKey === key) sortDir = -sortDir;
+  else { sortKey = key; sortDir = (key === 'product') ? 1 : -1; }
+  renderTable();
+}
+
+// A card per metal held. Takes the entry list so it can cover one bullion
+// category or every metal category at once.
+function metalCard(m, me) {
       if (!me.length) return '';
       const oz = me.reduce((s,e)=>s+(parseFloat(e.oz)||0),0);
       const cost = me.reduce((s,e)=>s+(parseFloat(e.cost)||0),0);
@@ -553,10 +631,9 @@ function renderSummary() {
       h += '<div class="stat"><label>Cost Basis</label><span>$'+f2(cost)+'</span></div>';
       if (val>0 && cost>0) h += '<div class="stat"><label>Gain/Loss</label><span class="'+gc+'">'+gs+'$'+f2(Math.abs(g))+' ('+gs+pct+'%)</span></div>';
       return h + '</div>';
-    }).join('');
-  } else {
-    sg.innerHTML = cats.map((c,i) => {
-      const ce = entries.filter(e => (e.category||'Precious Metals') === c.name);
+}
+
+function categoryCard(c, i, ce) {
       if (!ce.length) return '';
       const cost = ce.reduce((s,e)=>s+(parseFloat(e.cost)||0),0);
       const val = ce.reduce((s,e)=>s+entryValue(e),0);
@@ -569,7 +646,41 @@ function renderSummary() {
       if (val>0 && cost>0) h += '<div class="stat"><label>Gain/Loss</label><span class="'+gc+'">'+gs+'$'+f2(Math.abs(g))+'</span></div>';
       if (nStale) h += '<div class="stat"><label>Needs revaluing</label><span style="color:var(--amber)">'+nStale+'</span></div>';
       return h + '</div>';
-    }).join('');
+}
+
+function renderSummary() {
+  const sg = document.getElementById('sgrid');
+  const isMetalCat = n => !!(catByName[n]||{}).is_metal;
+  const catOf = e => e.category || 'Precious Metals';
+
+  // Group by how a thing is valued, not by what it is made of. An item priced
+  // off spot belongs with its metal; a gold chain held at appraisal is not
+  // bullion and keeps its own category card. Every entry lands in exactly one
+  // card either way.
+  const bySpot = e => (e.valuation_method||'spot') === 'spot' && !!e.metal;
+
+  if (tab === 'all') {
+    // "All" used to show one card per category, which says nothing when every
+    // item sits in the same one. Splitting bullion by metal is the breakdown
+    // that carries information.
+    const metalCards = METALS
+      .map(m => metalCard(m, entries.filter(e => bySpot(e) && e.metal===m)))
+      .join('');
+    const otherCards = cats
+      .map((c,i) => categoryCard(c, i, entries.filter(e => catOf(e)===c.name && !bySpot(e))))
+      .join('');
+    sg.innerHTML = metalCards + otherCards;
+  } else if (isMetalCat(tab)) {
+    const inTab = entries.filter(e => catOf(e)===tab);
+    sg.innerHTML = METALS
+      .map(m => metalCard(m, inTab.filter(e => bySpot(e) && e.metal===m)))
+      .join('')
+      + (cats.filter(c=>c.name===tab)
+          .map((c,i) => categoryCard(c, i, inTab.filter(e => !bySpot(e)))).join(''));
+  } else {
+    sg.innerHTML = cats
+      .map((c,i) => c.name===tab ? categoryCard(c, i, entries.filter(e => catOf(e)===c.name)) : '')
+      .join('');
   }
 
   // Totals + how trustworthy they are
@@ -589,14 +700,19 @@ function renderSummary() {
     ge.className = 'portfolio-gain '+(g>=0?'pos':'neg');
   } else ge.textContent='';
 
-  const chips = [
-    ['Priced live today', '$'+f2(live), false],
-    ['Your estimates', '$'+f2(manual), false],
-    ['Held at cost', '$'+f2(atCost), false],
-  ];
+  // These chips split the total by how trustworthy each part is. With only one
+  // bucket in play the split says nothing and just repeats the headline figure,
+  // so it is dropped - the revalue warning still stands on its own.
+  const buckets = [
+    ['Priced live today', live],
+    ['Your estimates', manual],
+    ['Held at cost', atCost],
+  ].filter(b => Math.abs(b[1]) >= 0.005);
+  const chips = buckets.length > 1
+    ? buckets.map(b => [b[0], '$'+f2(b[1]), false])
+    : [];
   if (nStale) chips.push(['Needs revaluing', nStale+(nStale===1?' item':' items'), true]);
   document.getElementById('bstrip').innerHTML = chips
-    .filter(c => c[1] !== '$0.00')
     .map(c => '<div class="basis-chip'+(c[2]?' warn':'')+'"><span class="bl">'+c[0]+'</span><span class="bv">'+c[1]+'</span></div>')
     .join('');
 }
@@ -606,6 +722,11 @@ function renderTable() {
   const tb = document.getElementById('tbody');
   document.getElementById('empty').style.display = list.length ? 'none' : 'block';
   if (!list.length) { tb.innerHTML=''; return; }
+  // A badge identical on every row is noise, so the category only shows when
+  // the list actually spans more than one.
+  const showCat = new Set(list.map(e => e.category || 'Precious Metals')).size > 1;
+  // Hide header and cells together via one class, so the columns stay aligned.
+  document.getElementById('assets-table').classList.toggle('hide-cat', !showCat);
   tb.innerHTML = list.map(e => {
     const cat = e.category || 'Precious Metals';
     const isM = !!(catByName[cat]||{}).is_metal;
@@ -616,28 +737,35 @@ function renderTable() {
       ? (g>=0 ? '<span class="pos">+$'+f2(g)+'</span>' : '<span class="neg">-$'+f2(Math.abs(g))+'</span>')
       : '-';
     const qty = isM && parseFloat(e.oz)
-      ? parseFloat(e.oz).toFixed(3)+' oz'
-      : (parseFloat(e.quantity)||1).toLocaleString();
+      ? fmtQty(e.oz)+' oz'
+      : fmtQty(e.quantity||1);
     const ph = e.photo_url
-      ? '<img class="thumb" src="'+esc(e.photo_url)+'" onclick="viewImg(\''+esc(e.photo_url)+'\')" loading="lazy">'
+      ? '<img class="thumb" src="'+esc(e.photo_url)+'" onclick="event.stopPropagation();viewImg(\''+esc(e.photo_url)+'\')" loading="lazy">'
       : '<div class="nophoto">-</div>';
-    const metalBadge = isM && e.metal ? ' <span class="badge '+esc(e.metal)+'">'+esc(e.metal)+'</span>' : '';
+    // The metal badge rides with the item name so it survives the collapsed
+    // phone row; the category badge is dropped when every item shares one.
+    const metalBadge = isM && e.metal ? '<span class="badge '+esc(e.metal)+'">'+esc(e.metal)+'</span>' : '';
     const staleTag = isStale(e) ? '<div class="stale">&#9888; revalue</div>' : '';
     const src = e.value_source || e.dealer || '-';
-    return '<tr><td data-label="Photo" class="'+(e.photo_url?'':'no-photo')+'">'+ph+'</td><td data-label="Date">'+(e.entry_date||'-')+'</td>'
-      +'<td data-label="Category"><span class="badge cat">'+esc(cat)+'</span>'+metalBadge+'</td>'
-      +'<td data-label="Item" class="cell-item"><div class="item-wrap">'+esc(e.product||'-')+detailSummary(e)+'</div></td>'
+    return '<tr onclick="toggleRow(this)">'
+      +'<td data-label="Photo">'+ph+'</td>'
+      +'<td data-label="Date">'+fmtDate(e.entry_date)+'</td>'
+      +'<td data-label="Category">'+(showCat ? '<span class="badge cat">'+esc(cat)+'</span>' : '')+'</td>'
+      +'<td data-label="Item" class="cell-item"><div class="item-wrap"><span class="item-name">'+esc(e.product||'-')+'</span>'
+      +'<span class="item-meta">'+metalBadge+detailSummary(e)+'</span></div></td>'
       +'<td data-label="Qty">'+qty+'</td>'
       +'<td data-label="Paid">'+(cost?'$'+f2(cost):'-')+'</td>'
-      +'<td data-label="Est. Value">'+(val>0?'$'+f2(val):'-')+'</td>'
+      +'<td data-label="Est. Value" class="cell-value">'+(val>0?'$'+f2(val):'-')+'</td>'
       +'<td data-label="Valued By"><div><div class="basis">'+basisLabel(e)+'</div>'+staleTag+'</div></td>'
-      +'<td data-label="Gain/Loss">'+gs+'</td>'
+      +'<td data-label="Gain/Loss" class="cell-gain">'+gs+'</td>'
       +'<td data-label="Source">'+esc(src)+'</td>'
       +'<td class="acts-col"><div class="acts">'
-      +'<button class="btn btn-secondary btn-sm" onclick="openEdit(\''+e.id+'\')">Edit</button>'
-      +'<button class="btn btn-danger btn-sm" onclick="delEntry(\''+e.id+'\')">Del</button>'
+      +'<button class="btn btn-secondary btn-sm" onclick="event.stopPropagation();openEdit(\''+e.id+'\')">Edit</button>'
+      +'<button class="btn btn-danger btn-sm" onclick="event.stopPropagation();delEntry(\''+e.id+'\')">Del</button>'
       +'</div></td></tr>';
   }).join('');
+  markSortedHeader();
+
   // Swap storage paths for signed URLs
   list.filter(e=>e.photo_url && !e.photo_url.startsWith('http')).forEach(async e => {
     const { data } = await sb.storage.from('metals-photos').createSignedUrl(e.photo_url, 3600);
@@ -977,7 +1105,33 @@ async function savePremiums() {
   btn.disabled=false; btn.textContent='Save';
 }
 
+// On a phone each row is a summary; the rest opens on tap. On desktop every
+// cell is visible anyway, so the class is harmless there.
+function toggleRow(tr){ tr.classList.toggle('open'); }
+
+function markSortedHeader(){
+  document.querySelectorAll('th.sortable').forEach(th => {
+    th.classList.remove('sort-asc','sort-desc');
+  });
+  const th = document.getElementById('th-'+sortKey);
+  if (th) th.classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
+}
+
 function closeModal(id){document.getElementById(id).classList.remove('open');}
+// "2026-10-01" wrapped to two lines in a narrow column; "1 Oct 26" does not.
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function fmtDate(d){
+  if(!d) return '-';
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
+  if(!m) return d;
+  return (+m[3])+' '+MONTHS[+m[2]-1]+' '+m[1].slice(2);
+}
+// Trailing zeros on a whole number are noise: 1.000 oz reads as 1 oz.
+function fmtQty(n){
+  const v = parseFloat(n);
+  if(!isFinite(v)) return '-';
+  return String(parseFloat(v.toFixed(3)));
+}
 function f2(n){return parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function esc(s){return(s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
