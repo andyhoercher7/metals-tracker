@@ -39,6 +39,17 @@ header{background:var(--surface);border-bottom:1px solid var(--border);padding:1
 .portfolio-gain.pos{color:var(--green)}
 .portfolio-gain.neg{color:var(--red)}
 .spacer{flex:1}
+.prem-intro{color:#888;font-size:.82rem;line-height:1.5;margin-bottom:14px}
+.prem-row{border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px}
+.prem-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.prem-head .pname{font-weight:600;text-transform:capitalize;flex:1}
+.prem-head input{width:90px;text-align:right}
+.prem-row input,.prem-row textarea{background:#111;border:1px solid var(--border);border-radius:8px;
+  color:#e8e8e8;padding:8px 10px;font-family:inherit;outline:none}
+.prem-row input:focus,.prem-row textarea:focus{border-color:var(--gold)}
+.prem-row textarea{width:100%;min-height:48px;font-size:.8rem;resize:vertical;line-height:1.45}
+.prem-asof{color:#777;font-size:.72rem;margin-top:6px}
+.prem-tag{color:var(--amber);font-weight:600}
 .warn-prem{color:var(--amber)}
 .muted-prem{color:#888}
 .spot-prices{display:flex;gap:14px;flex-wrap:wrap;font-size:.78rem}
@@ -198,6 +209,7 @@ tr:hover td{background:#1e1e1e}
     <div class="spot-prices" id="spots"><div class="spinner"></div></div>
     <div class="hbtns">
       <button class="btn btn-secondary btn-sm" id="ref-btn" onclick="refreshPrices()">&#8635; Refresh Prices</button>
+      <button class="btn btn-secondary btn-sm" onclick="openPremiums()">&#9878; Premiums</button>
       <button class="btn btn-secondary btn-sm" onclick="exportCsv()">&#8681; CSV</button>
       <button class="btn btn-secondary btn-sm" onclick="window.print()">&#128424; Print</button>
       <button class="btn btn-secondary btn-sm" onclick="doLogout()">Sign Out</button>
@@ -217,7 +229,7 @@ tr:hover td{background:#1e1e1e}
         <thead><tr>
           <th>Photo</th><th>Date</th><th>Category</th><th>Item</th>
           <th>Qty</th><th>Paid</th><th>Est. Value</th><th>Valued By</th>
-          <th>Gain/Loss</th><th>Premium</th><th>Source</th><th class="acts-col">Actions</th>
+          <th>Gain/Loss</th><th>Over Melt</th><th>Source</th><th class="acts-col">Actions</th>
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
@@ -225,6 +237,23 @@ tr:hover td{background:#1e1e1e}
         <div style="font-size:2.5rem;margin-bottom:10px">&#129689;</div>
         <div>Nothing here yet. Add your first item!</div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Premiums Modal -->
+<div class="modal-overlay" id="prem-modal">
+  <div class="modal">
+    <h2>Premium over spot</h2>
+    <p class="prem-intro">Bullion rarely changes hands at spot. These percentages are what the app
+      adds to live spot to estimate what your metal would actually fetch. They are starting
+      estimates, not quotes - put your own numbers in once you have a real one, and say where it
+      came from. An item with its own dealer price ignores all of this.</p>
+    <div id="prem-err" class="alert alert-err" style="display:none"></div>
+    <div id="prem-rows"></div>
+    <div class="modal-acts">
+      <button class="btn btn-secondary" onclick="closeModal('prem-modal')">Cancel</button>
+      <button class="btn" id="prem-save-btn" onclick="savePremiums()">Save</button>
     </div>
   </div>
 </div>
@@ -349,7 +378,7 @@ const sb = createClient(SB_URL, SB_KEY);
 const METALS = ['gold','silver','copper','platinum','palladium'];
 const STALE_DAYS = 365;
 
-let user=null, entries=[], cats=[], catByName={}, tab='all', editId=null,
+let user=null, entries=[], cats=[], catByName={}, premiums={}, tab='all', editId=null,
     spotPrices={}, pendingPhoto=null, existingPhoto=null, invItems=[];
 
 async function doLogin() {
@@ -375,11 +404,19 @@ async function showApp() {
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='flex';
   await loadCats();
+  await loadPremiums();
   await loadEntries();
   refreshPrices();   // don't await — the view updates when prices land
 }
 
 // ── Categories are rows in the DB, so adding one needs no code change ───────
+async function loadPremiums() {
+  const { data, error } = await sb.from('metal_premiums').select('*');
+  if (error) { console.error(error); premiums={}; return; }
+  premiums = {};
+  (data||[]).forEach(r => { premiums[r.metal] = r; });
+}
+
 async function loadCats() {
   const { data, error } = await sb.from('asset_categories').select('*').order('sort_order');
   if (error) { console.error(error); cats=[]; }
@@ -436,10 +473,25 @@ async function loadEntries() {
 // times a real price (your stored dealer price if you entered one, otherwise
 // live spot). Everything else is worth what you recorded, and the app always
 // shows where that number came from and when.
+// Spot is the driver of a bullion item's worth, but almost nothing sells AT
+// spot: coins and bars carry a premium both ways. So an item with no dealer
+// price of its own is valued at live spot plus that metal's premium, which is
+// a stored, editable number with a stated basis and date - not a constant
+// buried in this file, which is what the old 1.1x and 4.5x were.
+function premiumPct(metal) {
+  const p = premiums[metal];
+  return p ? (parseFloat(p.premium_pct)||0) : 0;
+}
+function spotWithPremium(metal) {
+  const spot = spotPrices[metal];
+  if (!spot) return 0;
+  return spot * (1 + premiumPct(metal)/100);
+}
 function entryValue(e) {
   const m = e.valuation_method || 'spot';
   if (m === 'spot') {
-    const per = parseFloat(e.mkt_price_per_oz) || spotPrices[e.metal] || 0;
+    // An explicit dealer price on the item always wins over the estimate.
+    const per = parseFloat(e.mkt_price_per_oz) || spotWithPremium(e.metal) || 0;
     return (parseFloat(e.oz)||0) * per;
   }
   if (m === 'cost') return parseFloat(e.cost)||0;
@@ -471,7 +523,11 @@ function isStale(e) {
 }
 function basisLabel(e) {
   const m = e.valuation_method || 'spot';
-  if (m === 'spot') return parseFloat(e.mkt_price_per_oz) ? '<b>Dealer price</b>' : '<b>Live spot</b>';
+  if (m === 'spot') {
+    if (parseFloat(e.mkt_price_per_oz)) return '<b>Dealer price</b>';
+    const pp = premiumPct(e.metal);
+    return '<b>Spot</b>' + (pp ? ' <span class="prem-tag">+'+(+pp.toFixed(1))+'%</span>' : '');
+  }
   if (m === 'cost') return '<b>Cost paid</b>';
   const when = e.value_as_of ? ' &middot; ' + e.value_as_of : '';
   return '<b>' + (m==='comp' ? 'Comp sale' : 'Appraisal') + '</b>' + when;
@@ -603,7 +659,7 @@ function renderTable() {
       +'<td data-label="Est. Value">'+(val>0?'$'+f2(val):'-')+'</td>'
       +'<td data-label="Valued By"><div><div class="basis">'+basisLabel(e)+'</div>'+staleTag+'</div></td>'
       +'<td data-label="Gain/Loss">'+gs+'</td>'
-      +'<td data-label="Premium">'+premiumCell(e)+'</td>'
+      +'<td data-label="Over Melt">'+premiumCell(e)+'</td>'
       +'<td data-label="Source">'+esc(src)+'</td>'
       +'<td class="acts-col"><div class="acts">'
       +'<button class="btn btn-secondary btn-sm" onclick="openEdit(\''+e.id+'\')">Edit</button>'
@@ -905,6 +961,48 @@ async function saveInv() {
     closeModal('inv-modal'); await loadEntries();
   } catch(e){err.textContent=e.message;err.style.display='block';}
   btn.disabled=false; btn.textContent='Save All';
+}
+
+// ── Premium editor ──────────────────────────────────────────────────────────
+function openPremiums() {
+  document.getElementById('prem-err').style.display='none';
+  document.getElementById('prem-rows').innerHTML = METALS.map(m => {
+    const r = premiums[m] || {};
+    const pct = r.premium_pct==null ? 0 : r.premium_pct;
+    return '<div class="prem-row"><div class="prem-head">'
+      + '<span class="badge '+esc(m)+'">'+esc(m)+'</span>'
+      + '<span class="pname">'+esc(m)+'</span>'
+      + '<input type="number" step="0.1" id="pp-'+esc(m)+'" value="'+esc(pct)+'">'
+      + '<span>%</span></div>'
+      + '<textarea id="pb-'+esc(m)+'" placeholder="Where this number came from">'+esc(r.basis||'')+'</textarea>'
+      + (r.as_of ? '<div class="prem-asof">Set '+esc(r.as_of)+'</div>' : '')
+      + '</div>';
+  }).join('');
+  document.getElementById('prem-modal').classList.add('open');
+}
+
+async function savePremiums() {
+  const btn = document.getElementById('prem-save-btn');
+  const err = document.getElementById('prem-err');
+  err.style.display='none';
+  const today = new Date().toISOString().split('T')[0];
+  const rows = METALS.map(m => {
+    const v = parseFloat(document.getElementById('pp-'+m).value);
+    return { metal:m, premium_pct: isFinite(v) ? v : 0,
+             basis: document.getElementById('pb-'+m).value.trim() || null, as_of: today };
+  });
+  const bad = rows.find(r => r.premium_pct < -100);
+  if (bad) { err.textContent='A premium below -100% would make '+bad.metal+' worth less than nothing.';
+             err.style.display='block'; return; }
+  btn.disabled=true; btn.textContent='Saving...';
+  try {
+    const { error } = await sb.from('metal_premiums').upsert(rows, { onConflict:'metal' });
+    if (error) throw error;
+    await loadPremiums();
+    closeModal('prem-modal');
+    renderSpots(); renderSummary(); renderTable();
+  } catch(e) { err.textContent=e.message; err.style.display='block'; }
+  btn.disabled=false; btn.textContent='Save';
 }
 
 function closeModal(id){document.getElementById(id).classList.remove('open');}
