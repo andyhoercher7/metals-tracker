@@ -39,6 +39,8 @@ header{background:var(--surface);border-bottom:1px solid var(--border);padding:1
 .portfolio-gain.pos{color:var(--green)}
 .portfolio-gain.neg{color:var(--red)}
 .spacer{flex:1}
+.warn-prem{color:var(--amber)}
+.muted-prem{color:#888}
 .spot-prices{display:flex;gap:14px;flex-wrap:wrap;font-size:.78rem}
 .spot-item{display:flex;flex-direction:column;align-items:center}
 .spot-label{color:#888;font-size:.65rem;text-transform:uppercase}
@@ -215,7 +217,7 @@ tr:hover td{background:#1e1e1e}
         <thead><tr>
           <th>Photo</th><th>Date</th><th>Category</th><th>Item</th>
           <th>Qty</th><th>Paid</th><th>Est. Value</th><th>Valued By</th>
-          <th>Gain/Loss</th><th>Source</th><th class="acts-col">Actions</th>
+          <th>Gain/Loss</th><th>Premium</th><th>Source</th><th class="acts-col">Actions</th>
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
@@ -443,6 +445,23 @@ function entryValue(e) {
   if (m === 'cost') return parseFloat(e.cost)||0;
   return (parseFloat(e.quantity)||1) * (parseFloat(e.value_each)||0);
 }
+// ── Premium over spot ───────────────────────────────────────────────────────
+// What you paid versus what the metal in the item is worth at TODAY's spot.
+// This is the number that separates "the metal moved" from "I paid over the
+// odds": melt is weight x live spot, never a stored dealer price, so a dealer
+// price entered on an item changes its value but never hides its premium.
+// Non-metal items have no spot to compare against, so they report nothing.
+const PREMIUM_WARN = 25;   // percent over melt worth flagging
+function premiumOverSpot(e) {
+  const cat = e.category || 'Precious Metals';
+  if (!(catByName[cat]||{}).is_metal) return null;
+  const oz = parseFloat(e.oz)||0, cost = parseFloat(e.cost)||0;
+  const spot = spotPrices[e.metal];
+  if (!oz || !cost || !spot) return null;
+  const melt = oz * spot;
+  return { melt, abs: cost - melt, pct: (cost - melt) / melt * 100 };
+}
+
 function isStale(e) {
   const m = e.valuation_method;
   if (m !== 'comp' && m !== 'appraisal') return false;
@@ -503,13 +522,15 @@ function renderSummary() {
   }
 
   // Totals + how trustworthy they are
-  let tv=0, tc=0, live=0, manual=0, atCost=0, nStale=0;
+  let tv=0, tc=0, live=0, manual=0, atCost=0, nStale=0, prem=0, premCost=0;
   entries.forEach(e => {
     const v = entryValue(e);
     tv += v; tc += parseFloat(e.cost)||0;
     const m = e.valuation_method || 'spot';
     if (m==='spot') live += v; else if (m==='cost') atCost += v; else manual += v;
     if (isStale(e)) nStale++;
+    const p = premiumOverSpot(e);
+    if (p) { prem += p.abs; premCost += p.melt; }
   });
   document.getElementById('ptotal').textContent = '$'+f2(tv);
   const ge = document.getElementById('pgain');
@@ -525,10 +546,30 @@ function renderSummary() {
     ['Held at cost', '$'+f2(atCost), false],
   ];
   if (nStale) chips.push(['Needs revaluing', nStale+(nStale===1?' item':' items'), true]);
+  // Premium is money already spent above the metal, so it belongs next to the
+  // total rather than buried per row.
+  if (premCost > 0 && Math.abs(prem) >= 0.005) {
+    const pc = (prem/premCost*100).toFixed(0);
+    chips.push([prem>=0 ? 'Premium paid over melt' : 'Bought under melt',
+                (prem>=0?'+':'-')+'$'+f2(Math.abs(prem))+' ('+(prem>=0?'+':'-')+Math.abs(pc)+'%)',
+                prem/premCost*100 >= PREMIUM_WARN]);
+  }
   document.getElementById('bstrip').innerHTML = chips
     .filter(c => c[1] !== '$0.00')
     .map(c => '<div class="basis-chip'+(c[2]?' warn':'')+'"><span class="bl">'+c[0]+'</span><span class="bv">'+c[1]+'</span></div>')
     .join('');
+}
+
+// Over melt is shown in amber past PREMIUM_WARN, because a big premium is a
+// fact to notice, not an error - fractional gold and graded coins carry one by
+// nature. Under melt is a straight win and reads green.
+function premiumCell(e) {
+  const p = premiumOverSpot(e);
+  if (!p) return '-';
+  const sign = p.abs >= 0 ? '+' : '-';
+  const cls = p.abs < 0 ? 'pos' : (p.pct >= PREMIUM_WARN ? 'warn-prem' : 'muted-prem');
+  return '<span class="'+cls+'">'+sign+'$'+f2(Math.abs(p.abs))
+       + ' <small>('+sign+p.pct.toFixed(0)+'%)</small></span>';
 }
 
 function renderTable() {
@@ -562,6 +603,7 @@ function renderTable() {
       +'<td data-label="Est. Value">'+(val>0?'$'+f2(val):'-')+'</td>'
       +'<td data-label="Valued By"><div><div class="basis">'+basisLabel(e)+'</div>'+staleTag+'</div></td>'
       +'<td data-label="Gain/Loss">'+gs+'</td>'
+      +'<td data-label="Premium">'+premiumCell(e)+'</td>'
       +'<td data-label="Source">'+esc(src)+'</td>'
       +'<td class="acts-col"><div class="acts">'
       +'<button class="btn btn-secondary btn-sm" onclick="openEdit(\''+e.id+'\')">Edit</button>'
@@ -747,10 +789,14 @@ function exportCsv() {
   const cols = ['category','entry_date','product','metal','oz','quantity','cost',
                 'valuation_method','mkt_price_per_oz','value_each','value_as_of',
                 'value_source','dealer','note'];
-  const head = cols.concat(['est_value','details']);
+  const head = cols.concat(['est_value','melt_value_at_spot','premium_paid','premium_pct','details']);
   const rows = entries.map(e => {
     const vals = cols.map(k => e[k]==null ? '' : String(e[k]));
     vals.push(entryValue(e).toFixed(2));
+    const p = premiumOverSpot(e);
+    vals.push(p ? p.melt.toFixed(2) : '');
+    vals.push(p ? p.abs.toFixed(2) : '');
+    vals.push(p ? p.pct.toFixed(1) : '');
     vals.push(Object.entries(e.details||{}).map(([k,v])=>k+'='+v).join('; '));
     return vals;
   });
