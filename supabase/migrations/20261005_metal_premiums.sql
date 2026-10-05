@@ -31,5 +31,5 @@ INSERT INTO metal_premiums (metal, premium_pct, basis) VALUES
   ('silver', 12, 'Starting estimate: generic rounds and bars private-sale over spot; junk silver sits nearer spot. Replace with a real quote.'),
   ('platinum', 5, 'Starting estimate. No holdings yet.'),
   ('palladium', 5, 'Starting estimate. No holdings yet.'),
-  ('copper', 150, 'LOW CONFIDENCE GUESS. Copper bullion retails far above metal value and resells well below retail; there is no dealer bid. Check completed eBay sales for your exact bars and replace this number.')
+  ('copper', 200, 'eBay check by Andrew, 2026-10-05: 5 lb (72.9 troy oz) .999 bars listed 75-150 USD, two live listings at 89.99 and 119, both or-Best-Offer. Melt for that bar is 33.10, so those asks are +127% to +353% over spot. Set at +200% (about 99 a bar), nearer the observed listings than the top ask because Best Offer sells below ask. These are asking prices, not completed sales, and eBay fees plus shipping take roughly 25-30% of whatever it sells for.')
 ON CONFLICT (metal) DO NOTHING;
