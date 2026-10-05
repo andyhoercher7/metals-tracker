@@ -3,13 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Metals Tracker</title>
+<meta name="theme-color" content="#0f0f0f">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Asset Tracker">
+<title>Asset Tracker</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f0f;color:#e8e8e8;min-height:100vh}
-:root{--gold:#f5c518;--silver:#c0c0c0;--copper:#b87333;--platinum:#e5e4e2;--palladium:#cec5b6;--surface:#1a1a1a;--surface2:#242424;--border:#333;--green:#4caf50;--red:#e55}
+:root{--gold:#f5c518;--silver:#c0c0c0;--copper:#b87333;--platinum:#e5e4e2;--palladium:#cec5b6;--surface:#1a1a1a;--surface2:#242424;--border:#333;--green:#4caf50;--red:#e55;--amber:#f0a030;--blue:#5b9bd5}
 #login-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,#0f0f0f 0%,#1a1500 100%)}
 .login-box{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:40px;width:100%;max-width:400px}
 .login-box h1{font-size:1.8rem;margin-bottom:8px;color:var(--gold)}
@@ -19,6 +22,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .form-group input,.form-group select,.form-group textarea{width:100%;padding:10px 14px;background:#111;border:1px solid var(--border);border-radius:8px;color:#e8e8e8;font-size:.95rem;outline:none}
 .form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--gold)}
 .form-group textarea{resize:vertical;min-height:80px}
+.hint{font-size:.72rem;color:#777;margin-top:4px}
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:.9rem;font-weight:500;transition:all .15s}
 .btn-primary{background:var(--gold);color:#000;width:100%}
 .btn-primary:hover{background:#d4a800}
@@ -40,22 +44,35 @@ header{background:var(--surface);border-bottom:1px solid var(--border);padding:1
 .spot-label{color:#888;font-size:.65rem;text-transform:uppercase}
 .spot-value{color:var(--gold);font-weight:600}
 .hbtns{display:flex;gap:8px;flex-wrap:wrap}
-#content{flex:1;padding:20px;max-width:1200px;margin:0 auto;width:100%}
-.summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin-bottom:22px}
+#content{flex:1;padding:20px;max-width:1280px;margin:0 auto;width:100%}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:14px;margin-bottom:14px}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;position:relative;overflow:hidden}
-.card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:#444}
 .card.gold::before{background:var(--gold)}
 .card.silver::before{background:var(--silver)}
 .card.copper::before{background:var(--copper)}
 .card.platinum::before{background:var(--platinum)}
 .card.palladium::before{background:var(--palladium)}
+.card.c0::before{background:var(--gold)}
+.card.c1::before{background:#9b7fd4}
+.card.c2::before{background:#4fa3a3}
+.card.c3::before{background:var(--blue)}
+.card.c4::before{background:var(--copper)}
+.card.c5::before{background:#d47fa8}
 .card h3{font-size:.72rem;text-transform:uppercase;color:#888;margin-bottom:10px}
 .card .oz{font-size:1.3rem;font-weight:700}
 .card .oz span{font-size:.72rem;color:#888}
-.stat{display:flex;justify-content:space-between;margin-top:5px;font-size:.8rem}
+.stat{display:flex;justify-content:space-between;margin-top:5px;font-size:.8rem;gap:8px}
 .stat label{color:#888}
 .pos{color:var(--green)}
 .neg{color:var(--red)}
+/* Valuation-basis strip: how much of the total is actually knowable */
+.basis-strip{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:22px;font-size:.78rem}
+.basis-chip{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:8px 12px;display:flex;flex-direction:column;gap:2px}
+.basis-chip .bl{color:#888;font-size:.66rem;text-transform:uppercase}
+.basis-chip .bv{font-weight:600}
+.basis-chip.warn{border-color:var(--amber)}
+.basis-chip.warn .bv{color:var(--amber)}
 .tabs{display:flex;gap:2px;margin-bottom:18px;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .tab{padding:8px 14px;background:none;border:none;color:#888;cursor:pointer;font-size:.86rem;border-bottom:2px solid transparent;margin-bottom:-1px;border-radius:4px 4px 0 0}
 .tab:hover{color:#e8e8e8}
@@ -68,19 +85,23 @@ table{width:100%;border-collapse:collapse;background:var(--surface);border:1px s
 th{background:var(--surface2);padding:9px 12px;text-align:left;font-size:.74rem;text-transform:uppercase;color:#888;white-space:nowrap}
 td{padding:9px 12px;border-top:1px solid var(--border);font-size:.85rem;vertical-align:middle}
 tr:hover td{background:#1e1e1e}
-.badge{display:inline-flex;padding:2px 8px;border-radius:20px;font-size:.72rem;font-weight:600;text-transform:capitalize}
+.badge{display:inline-flex;padding:2px 8px;border-radius:20px;font-size:.72rem;font-weight:600;text-transform:capitalize;white-space:nowrap}
 .badge.gold{background:#2a2000;color:var(--gold)}
 .badge.silver{background:#222;color:var(--silver)}
 .badge.copper{background:#200e00;color:var(--copper)}
 .badge.platinum{background:#1e1e1e;color:var(--platinum)}
 .badge.palladium{background:#1a1a1a;color:var(--palladium)}
+.badge.cat{background:#1e2430;color:#9ab}
+.basis{font-size:.7rem;color:#888;white-space:nowrap}
+.basis b{color:#bbb;font-weight:600}
+.stale{color:var(--amber);font-size:.7rem;white-space:nowrap}
 .acts{display:flex;gap:5px}
 .thumb{width:34px;height:34px;border-radius:6px;object-fit:cover;cursor:pointer;border:1px solid var(--border)}
 .nophoto{width:34px;height:34px;border-radius:6px;background:var(--surface2);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;color:#444;font-size:.65rem}
 .empty{text-align:center;padding:50px 20px;color:#555}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;align-items:center;justify-content:center;padding:16px}
 .modal-overlay.open{display:flex}
-.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:26px;width:100%;max-width:540px;max-height:92vh;overflow-y:auto}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:26px;width:100%;max-width:560px;max-height:92vh;overflow-y:auto}
 .modal.wide{max-width:680px}
 .modal h2{margin-bottom:18px;font-size:1.05rem;color:var(--gold)}
 .mgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -88,12 +109,11 @@ tr:hover td{background:#1e1e1e}
 .mfoot{display:flex;gap:8px;justify-content:flex-end;margin-top:18px;flex-wrap:wrap}
 .alert{padding:10px 13px;border-radius:8px;margin-bottom:14px;font-size:.85rem}
 .alert-err{background:#2a0000;border:1px solid #c00;color:#f88}
+.alert-info{background:#101a24;border:1px solid #2a4a66;color:#9cf;font-size:.8rem}
+.fieldset{grid-column:1/-1;border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:4px}
+.fieldset legend{font-size:.72rem;text-transform:uppercase;color:#888;padding:0 6px}
 .spinner{width:15px;height:15px;border:2px solid #333;border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;display:inline-block;vertical-align:middle}
 @keyframes spin{to{transform:rotate(360deg)}}
-.price-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 13px;display:flex;justify-content:space-between;align-items:center;margin-top:7px}
-.price-card .pname{font-size:.82rem;color:#ccc}
-.price-card .pprice{font-size:.92rem;color:var(--gold);font-weight:600}
-.price-card .poz{font-size:.72rem;color:#888}
 .inv-textarea{width:100%;min-height:130px;padding:11px;background:#111;border:1px solid var(--border);border-radius:8px;color:#e8e8e8;font-size:.84rem;outline:none;resize:vertical;font-family:monospace}
 .inv-textarea:focus{border-color:var(--gold)}
 .inv-table{width:100%;border-collapse:collapse;margin-top:14px;font-size:.82rem}
@@ -111,14 +131,53 @@ tr:hover td{background:#1e1e1e}
   #content{padding:10px}
   td,th{padding:7px 9px}
 }
+/* Phone layout: a wide table is unusable on a 400px screen, so each row
+   becomes a card with its own labels. Same markup, no second render path. */
+@media(max-width:720px){
+  .tbl-wrap{overflow-x:visible}
+  table{border:none;background:none}
+  thead{display:none}
+  tbody,tr,td{display:block;width:100%}
+  tr{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:10px;padding:6px 4px}
+  tr:hover td{background:none}
+  td{border:none;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 10px;text-align:right}
+  td::before{content:attr(data-label);color:#888;font-size:.7rem;text-transform:uppercase;letter-spacing:.3px;text-align:left;flex-shrink:0}
+  td.cell-item{font-weight:600;font-size:.95rem}
+  td.cell-item::before{align-self:flex-start}
+  td.cell-item .item-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+  td.no-photo{display:none}
+  .acts{justify-content:flex-end;width:100%}
+  .basis{text-align:right}
+  .summary-grid{grid-template-columns:1fr 1fr;gap:10px}
+  .spot-prices{gap:10px;order:3;width:100%;justify-content:space-between}
+  .hbtns{order:2}
+}
+@media(max-width:400px){
+  .summary-grid{grid-template-columns:1fr}
+}
+/* Printable schedule of assets — for insurance or estate records */
+@media print{
+  body{background:#fff;color:#000}
+  header .hbtns,.toolbar,.tabs,.modal-overlay,.basis-chip.warn .bv{display:none!important}
+  header{position:static;border-color:#ccc;background:#fff}
+  .portfolio-total{color:#000}
+  #app{display:block!important}
+  #login-screen{display:none!important}
+  .card,.basis-chip,table{background:#fff;border-color:#999;color:#000}
+  th{background:#eee;color:#000}
+  td{border-color:#ccc}
+  .acts{display:none}
+  .card h3,.stat label,.basis{color:#444}
+  a{color:#000}
+}
 </style>
 </head>
 <body>
 
 <div id="login-screen">
   <div class="login-box">
-    <h1>&#9875; Metals Tracker</h1>
-    <p>Precious metals portfolio tracker</p>
+    <h1>&#9830; Asset Tracker</h1>
+    <p>Precious metals, art, collectibles &amp; other things of value</p>
     <div id="login-err" class="alert alert-err" style="display:none"></div>
     <div class="form-group"><label>Email</label><input type="email" id="l-email" autocomplete="username"></div>
     <div class="form-group"><label>Password</label><input type="password" id="l-pass" autocomplete="current-password"></div>
@@ -129,7 +188,7 @@ tr:hover td{background:#1e1e1e}
 <div id="app">
   <header>
     <div>
-      <div style="font-size:.65rem;color:#888;text-transform:uppercase">Portfolio Value</div>
+      <div style="font-size:.65rem;color:#888;text-transform:uppercase">Total Estimated Value</div>
       <div class="portfolio-total" id="ptotal">$0.00</div>
       <div class="portfolio-gain" id="pgain"></div>
     </div>
@@ -137,36 +196,32 @@ tr:hover td{background:#1e1e1e}
     <div class="spot-prices" id="spots"><div class="spinner"></div></div>
     <div class="hbtns">
       <button class="btn btn-secondary btn-sm" id="ref-btn" onclick="refreshPrices()">&#8635; Refresh Prices</button>
+      <button class="btn btn-secondary btn-sm" onclick="exportCsv()">&#8681; CSV</button>
+      <button class="btn btn-secondary btn-sm" onclick="window.print()">&#128424; Print</button>
       <button class="btn btn-secondary btn-sm" onclick="doLogout()">Sign Out</button>
     </div>
   </header>
   <div id="content">
     <div class="summary-grid" id="sgrid"></div>
-    <div class="tabs">
-      <button class="tab active" onclick="setTab('all',this)">All</button>
-      <button class="tab" onclick="setTab('gold',this)">Gold</button>
-      <button class="tab" onclick="setTab('silver',this)">Silver</button>
-      <button class="tab" onclick="setTab('copper',this)">Copper</button>
-      <button class="tab" onclick="setTab('platinum',this)">Platinum</button>
-      <button class="tab" onclick="setTab('palladium',this)">Palladium</button>
-    </div>
+    <div class="basis-strip" id="bstrip"></div>
+    <div class="tabs" id="tabs"></div>
     <div class="toolbar">
-      <input class="search" type="text" placeholder="Search product, dealer..." id="q" oninput="renderTable()">
-      <button class="btn btn-primary btn-sm" onclick="openAdd()">+ Add Entry</button>
+      <input class="search" type="text" placeholder="Search item, source, notes..." id="q" oninput="renderTable()">
+      <button class="btn btn-primary btn-sm" style="width:auto" onclick="openAdd()">+ Add Item</button>
       <button class="btn btn-secondary btn-sm" onclick="openInv()">&#128203; Paste Invoice</button>
     </div>
     <div class="tbl-wrap">
       <table>
         <thead><tr>
-          <th>Photo</th><th>Date</th><th>Metal</th><th>Product</th>
-          <th>Oz</th><th>Paid</th><th>$/oz</th><th>Mkt Value</th>
-          <th>Gain/Loss</th><th>Dealer</th><th>Actions</th>
+          <th>Photo</th><th>Date</th><th>Category</th><th>Item</th>
+          <th>Qty</th><th>Paid</th><th>Est. Value</th><th>Valued By</th>
+          <th>Gain/Loss</th><th>Source</th><th class="acts-col">Actions</th>
         </tr></thead>
         <tbody id="tbody"></tbody>
       </table>
       <div id="empty" class="empty" style="display:none">
         <div style="font-size:2.5rem;margin-bottom:10px">&#129689;</div>
-        <div>No entries yet. Add your first holding!</div>
+        <div>Nothing here yet. Add your first item!</div>
       </div>
     </div>
   </div>
@@ -175,11 +230,15 @@ tr:hover td{background:#1e1e1e}
 <!-- Entry Modal -->
 <div class="modal-overlay" id="entry-modal">
   <div class="modal">
-    <h2 id="mtitle">Add Entry</h2>
+    <h2 id="mtitle">Add Item</h2>
     <div id="merr" class="alert alert-err" style="display:none"></div>
     <div class="mgrid">
-      <div class="form-group"><label>Date</label><input type="date" id="f-date"></div>
-      <div class="form-group"><label>Metal</label>
+      <div class="form-group"><label>Category</label><select id="f-category" onchange="onCatChange()"></select></div>
+      <div class="form-group"><label>Date Acquired</label><input type="date" id="f-date"></div>
+      <div class="form-group full"><label>Item Name</label><input type="text" id="f-product" placeholder="e.g. 1oz Silver American Eagle 2024"></div>
+
+      <!-- Bullion-only fields -->
+      <div class="form-group" id="w-metal"><label>Metal</label>
         <select id="f-metal">
           <option value="gold">Gold</option>
           <option value="silver">Silver</option>
@@ -188,20 +247,52 @@ tr:hover td{background:#1e1e1e}
           <option value="palladium">Palladium</option>
         </select>
       </div>
-      <div class="form-group full"><label>Product Name</label><input type="text" id="f-product" placeholder="e.g. 1oz Silver American Eagle 2024"></div>
-      <div class="form-group"><label>Troy Oz</label><input type="number" id="f-oz" step="0.001" min="0"></div>
-      <div class="form-group"><label>Total Cost Paid ($)</label><input type="number" id="f-cost" step="0.01" min="0"></div>
-      <div class="form-group full"><label>Dealer</label><input type="text" id="f-dealer" placeholder="e.g. APMEX, JM Bullion"></div>
+      <div class="form-group" id="w-oz"><label>Troy Oz (total)</label><input type="number" id="f-oz" step="0.001" min="0"></div>
+
+      <div class="form-group" id="w-qty"><label>Quantity</label><input type="number" id="f-qty" step="0.01" min="0" value="1"></div>
+      <div class="form-group"><label>Total Cost Paid ($)</label><input type="number" id="f-cost" step="0.01" min="0" placeholder="Leave blank if unknown"></div>
+
+      <fieldset class="fieldset">
+        <legend>Valuation</legend>
+        <div class="mgrid">
+          <div class="form-group"><label>Valued By</label>
+            <select id="f-method" onchange="onMethodChange()">
+              <option value="spot">Live spot price</option>
+              <option value="comp">Comparable sale</option>
+              <option value="appraisal">Appraisal</option>
+              <option value="cost">Cost paid</option>
+            </select>
+          </div>
+          <div class="form-group" id="w-mkt"><label>Actual price per oz ($)</label>
+            <input type="number" id="f-mktprice" step="0.01" min="0" placeholder="Optional">
+            <div class="hint">Leave blank to value at spot. Enter a real dealer price for replacement value.</div>
+          </div>
+          <div class="form-group" id="w-value"><label>Est. Value per Unit ($)</label><input type="number" id="f-value" step="0.01" min="0"></div>
+          <div class="form-group" id="w-valdate"><label>Value As Of</label><input type="date" id="f-valdate"></div>
+          <div class="form-group full" id="w-valsrc"><label>Value Source</label>
+            <input type="text" id="f-valsrc" placeholder="e.g. PSA Price Guide, Heritage auction Mar 2026, Smith Appraisals">
+            <div class="hint">Where the number came from. An estimate with no source can't be checked later.</div>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="fieldset" id="w-details" style="display:none">
+        <legend id="details-legend">Details</legend>
+        <div class="mgrid" id="f-details"></div>
+      </fieldset>
+
+      <div class="form-group full"><label id="lbl-dealer">Dealer / Source</label><input type="text" id="f-dealer" placeholder="e.g. APMEX, Christie's, eBay"></div>
       <div class="form-group full"><label>Notes</label><textarea id="f-note" placeholder="Optional notes"></textarea></div>
       <div class="form-group full">
         <label>Photo</label>
         <input type="file" id="f-photo" accept="image/*" onchange="prevPhoto(event)">
+        <div class="hint">Resized in your browser before upload to keep storage free.</div>
         <img id="f-prev" class="photo-preview" style="display:none">
       </div>
     </div>
     <div class="mfoot">
       <button class="btn btn-secondary" onclick="closeModal('entry-modal')">Cancel</button>
-      <button class="btn btn-primary" id="save-btn" onclick="saveEntry()">Save</button>
+      <button class="btn btn-primary" style="width:auto" id="save-btn" onclick="saveEntry()">Save</button>
     </div>
   </div>
 </div>
@@ -212,6 +303,7 @@ tr:hover td{background:#1e1e1e}
     <h2>&#128203; Paste Invoice / Receipt</h2>
     <div id="inv-err" class="alert alert-err" style="display:none"></div>
     <div id="inv-s1">
+      <div class="alert alert-info">Reads bullion line items from a dealer invoice. Every row is shown for you to check before anything is saved.</div>
       <div style="display:flex;gap:8px;margin-bottom:12px">
         <button class="btn btn-secondary btn-sm" id="inv-tab-text" onclick="setInvTab('text')" style="border-color:var(--gold);color:var(--gold)">Paste Text</button>
         <button class="btn btn-secondary btn-sm" id="inv-tab-pdf" onclick="setInvTab('pdf')">Upload PDF</button>
@@ -221,21 +313,21 @@ tr:hover td{background:#1e1e1e}
         <textarea class="inv-textarea" id="inv-text" placeholder="Paste invoice or order confirmation text here..."></textarea>
       </div>
       <div id="inv-pdf-mode" style="display:none">
-        <p style="color:#888;font-size:.83rem;margin-bottom:10px">Upload your invoice PDF and Claude will extract all line items automatically.</p>
+        <p style="color:#888;font-size:.83rem;margin-bottom:10px">Upload your invoice PDF and the line items will be extracted automatically.</p>
         <input type="file" id="inv-pdf" accept="application/pdf" style="width:100%;padding:10px;background:#111;border:1px solid var(--border);border-radius:8px;color:#e8e8e8;font-size:.88rem">
         <div id="inv-pdf-name" style="margin-top:8px;font-size:.8rem;color:#888"></div>
       </div>
       <div class="mfoot">
         <button class="btn btn-secondary" onclick="closeModal('inv-modal')">Cancel</button>
-        <button class="btn btn-primary" id="parse-btn" onclick="parseInv()">&#129302; Parse with AI</button>
+        <button class="btn btn-primary" style="width:auto" id="parse-btn" onclick="parseInv()">Extract Items</button>
       </div>
     </div>
     <div id="inv-s2" style="display:none">
-      <p style="color:#888;font-size:.83rem;margin-bottom:8px">Review and edit the extracted items, then save all to your portfolio.</p>
+      <p style="color:#888;font-size:.83rem;margin-bottom:8px">Check and correct the extracted items, then save them.</p>
       <div id="inv-items"></div>
       <div class="mfoot">
         <button class="btn btn-secondary" onclick="invBack()">&#8592; Back</button>
-        <button class="btn btn-primary" id="inv-save-btn" onclick="saveInv()">Save All</button>
+        <button class="btn btn-primary" style="width:auto" id="inv-save-btn" onclick="saveInv()">Save All</button>
       </div>
     </div>
   </div>
@@ -252,8 +344,11 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const FN_URL = 'https://wgnhdguklxewazkfhzwe.supabase.co/functions/v1/metals-tracker';
 const { createClient } = supabase;
 const sb = createClient(SB_URL, SB_KEY);
+const METALS = ['gold','silver','copper','platinum','palladium'];
+const STALE_DAYS = 365;
 
-let user=null, entries=[], tab='all', editId=null, spotPrices={}, pendingPhoto=null, existingPhoto=null, invItems=[];
+let user=null, entries=[], cats=[], catByName={}, tab='all', editId=null,
+    spotPrices={}, pendingPhoto=null, existingPhoto=null, invItems=[];
 
 async function doLogin() {
   const em = document.getElementById('l-email').value.trim();
@@ -277,8 +372,25 @@ async function init() {
 async function showApp() {
   document.getElementById('login-screen').style.display='none';
   document.getElementById('app').style.display='flex';
-  await loadEntries();   // load entries first so product list is ready
-  refreshPrices();       // then kick off price fetch (don't await — updates when ready)
+  await loadCats();
+  await loadEntries();
+  refreshPrices();   // don't await — the view updates when prices land
+}
+
+// ── Categories are rows in the DB, so adding one needs no code change ───────
+async function loadCats() {
+  const { data, error } = await sb.from('asset_categories').select('*').order('sort_order');
+  if (error) { console.error(error); cats=[]; }
+  else cats = data || [];
+  catByName = {};
+  cats.forEach(c => { catByName[c.name] = c; });
+  // Tabs
+  document.getElementById('tabs').innerHTML =
+    '<button class="tab active" onclick="setTab(\'all\',this)">All</button>' +
+    cats.map(c => '<button class="tab" onclick="setTab(\''+esc(c.name)+'\',this)">'+esc(c.name)+'</button>').join('');
+  // Category dropdown in the form
+  document.getElementById('f-category').innerHTML =
+    cats.map(c => '<option value="'+esc(c.name)+'">'+esc(c.name)+'</option>').join('');
 }
 
 async function refreshPrices() {
@@ -294,7 +406,7 @@ async function refreshPrices() {
     if (spotData.error) throw new Error(spotData.error);
     spotPrices = spotData;
   } catch(e) {
-    sp.innerHTML = '<span style="color:#e55;font-size:.78rem" title="'+e.message+'">Price fetch failed</span>';
+    sp.innerHTML = '<span style="color:#e55;font-size:.78rem" title="'+esc(e.message)+'">Price fetch failed</span>';
     btn.disabled = false;
     renderSummary(); renderTable();
     return;
@@ -304,9 +416,8 @@ async function refreshPrices() {
 }
 function renderSpots() {
   const sp = document.getElementById('spots');
-  const ms = ['gold','silver','platinum','palladium','copper'];
   const sy = {gold:'Au',silver:'Ag',platinum:'Pt',palladium:'Pd',copper:'Cu'};
-  const items = ms.filter(m=>spotPrices[m]).map(m =>
+  const items = METALS.filter(m=>spotPrices[m]).map(m =>
     '<div class="spot-item"><span class="spot-label">'+sy[m]+'</span><span class="spot-value">$'+f2(spotPrices[m])+'</span></div>'
   ).join('');
   sp.innerHTML = items || '<span style="color:#555;font-size:.78rem">Prices unavailable</span>';
@@ -317,82 +428,147 @@ async function loadEntries() {
   if (error) { console.error(error); return; }
   entries = data || []; renderSummary(); renderTable();
 }
+
+// ── Valuation ───────────────────────────────────────────────────────────────
+// One rule per method, and nothing is invented: bullion is worth its weight
+// times a real price (your stored dealer price if you entered one, otherwise
+// live spot). Everything else is worth what you recorded, and the app always
+// shows where that number came from and when.
+function entryValue(e) {
+  const m = e.valuation_method || 'spot';
+  if (m === 'spot') {
+    const per = parseFloat(e.mkt_price_per_oz) || spotPrices[e.metal] || 0;
+    return (parseFloat(e.oz)||0) * per;
+  }
+  if (m === 'cost') return parseFloat(e.cost)||0;
+  return (parseFloat(e.quantity)||1) * (parseFloat(e.value_each)||0);
+}
+function isStale(e) {
+  const m = e.valuation_method;
+  if (m !== 'comp' && m !== 'appraisal') return false;
+  if (!e.value_as_of) return true;
+  const days = (Date.now() - new Date(e.value_as_of+'T00:00:00Z').getTime()) / 86400000;
+  return days > STALE_DAYS;
+}
+function basisLabel(e) {
+  const m = e.valuation_method || 'spot';
+  if (m === 'spot') return parseFloat(e.mkt_price_per_oz) ? '<b>Dealer price</b>' : '<b>Live spot</b>';
+  if (m === 'cost') return '<b>Cost paid</b>';
+  const when = e.value_as_of ? ' &middot; ' + e.value_as_of : '';
+  return '<b>' + (m==='comp' ? 'Comp sale' : 'Appraisal') + '</b>' + when;
+}
+
 function filtered() {
-  let l = tab==='all' ? entries : entries.filter(e=>e.metal===tab);
+  let l = tab==='all' ? entries : entries.filter(e => (e.category||'Precious Metals') === tab);
   const q = document.getElementById('q').value.toLowerCase();
-  if (q) l = l.filter(e => (e.product+' '+e.dealer+' '+e.note).toLowerCase().includes(q));
+  if (q) l = l.filter(e => ((e.product||'')+' '+(e.dealer||'')+' '+(e.note||'')+' '+(e.value_source||'')+' '+JSON.stringify(e.details||{})).toLowerCase().includes(q));
   return l;
 }
+
 function renderSummary() {
-  const ms = ['gold','silver','copper','platinum','palladium'];
-  let tv=0, tc=0;
-  document.getElementById('sgrid').innerHTML = ms.map(m => {
-    const me = entries.filter(e=>e.metal===m);
-    if (!me.length) return '';
-    const oz = me.reduce((s,e)=>s+parseFloat(e.oz||0),0);
-    const cost = me.reduce((s,e)=>s+parseFloat(e.cost||0),0);
-    const spot = spotPrices[m]||0;
-    // Use stored product price per entry when available, fall back to spot
-    const mult = m==='copper' ? 4.5 : 1.1;
-    const val = me.reduce((s,e)=>s+parseFloat(e.oz||0),0) * spot * mult;
-    const safeVal = isNaN(val)||!isFinite(val) ? 0 : val;
-    const g = safeVal-cost;
-    tv+=safeVal; tc+=cost;
-    const gc = g>=0?'pos':'neg'; const gs = g>=0?'+':'-';
-    const pct = (cost>0 && isFinite(g/cost)) ? (g/cost*100).toFixed(1) : '0.0';
-    let h = '<div class="card '+m+'"><h3>'+m+'</h3><div class="oz">'+oz.toFixed(3)+' <span>troy oz</span></div>';
-    if (safeVal>0) {
-      if (spot) h += '<div class="stat"><label>Spot</label><span>$'+f2(spot)+'/oz</span></div>';
-      h += '<div class="stat"><label>Mkt Value</label><span>$'+f2(safeVal)+'</span></div>';
+  // Per-metal cards while viewing bullion, per-category cards otherwise.
+  const sg = document.getElementById('sgrid');
+  if (tab === 'Precious Metals') {
+    sg.innerHTML = METALS.map(m => {
+      const me = entries.filter(e=>e.metal===m && (e.category||'Precious Metals')==='Precious Metals');
+      if (!me.length) return '';
+      const oz = me.reduce((s,e)=>s+(parseFloat(e.oz)||0),0);
+      const cost = me.reduce((s,e)=>s+(parseFloat(e.cost)||0),0);
+      const val = me.reduce((s,e)=>s+entryValue(e),0);
+      const g = val-cost, gc = g>=0?'pos':'neg', gs = g>=0?'+':'-';
+      const pct = cost>0 ? (g/cost*100).toFixed(1) : '0.0';
+      let h = '<div class="card '+m+'"><h3>'+m+'</h3><div class="oz">'+oz.toFixed(3)+' <span>troy oz</span></div>';
+      if (spotPrices[m]) h += '<div class="stat"><label>Spot</label><span>$'+f2(spotPrices[m])+'/oz</span></div>';
+      h += '<div class="stat"><label>Est. Value</label><span>$'+f2(val)+'</span></div>';
       h += '<div class="stat"><label>Cost Basis</label><span>$'+f2(cost)+'</span></div>';
-      h += '<div class="stat"><label>Gain/Loss</label><span class="'+gc+'">'+gs+'$'+f2(Math.abs(g))+' ('+gs+pct+'%)</span></div>';
-    } else {
-      if (spot) h += '<div class="stat"><label>Spot</label><span>$'+f2(spot)+'/oz</span></div>';
+      if (val>0 && cost>0) h += '<div class="stat"><label>Gain/Loss</label><span class="'+gc+'">'+gs+'$'+f2(Math.abs(g))+' ('+gs+pct+'%)</span></div>';
+      return h + '</div>';
+    }).join('');
+  } else {
+    sg.innerHTML = cats.map((c,i) => {
+      const ce = entries.filter(e => (e.category||'Precious Metals') === c.name);
+      if (!ce.length) return '';
+      const cost = ce.reduce((s,e)=>s+(parseFloat(e.cost)||0),0);
+      const val = ce.reduce((s,e)=>s+entryValue(e),0);
+      const g = val-cost, gc = g>=0?'pos':'neg', gs = g>=0?'+':'-';
+      const nStale = ce.filter(isStale).length;
+      let h = '<div class="card c'+(i%6)+'"><h3>'+esc(c.name)+'</h3>';
+      h += '<div class="oz">$'+f2(val)+' <span>est. value</span></div>';
+      h += '<div class="stat"><label>Items</label><span>'+ce.length+'</span></div>';
       h += '<div class="stat"><label>Cost Basis</label><span>$'+f2(cost)+'</span></div>';
-    }
-    return h + '</div>';
-  }).join('');
-  document.getElementById('ptotal').textContent = '$'+f2(tv||tc);
+      if (val>0 && cost>0) h += '<div class="stat"><label>Gain/Loss</label><span class="'+gc+'">'+gs+'$'+f2(Math.abs(g))+'</span></div>';
+      if (nStale) h += '<div class="stat"><label>Needs revaluing</label><span style="color:var(--amber)">'+nStale+'</span></div>';
+      return h + '</div>';
+    }).join('');
+  }
+
+  // Totals + how trustworthy they are
+  let tv=0, tc=0, live=0, manual=0, atCost=0, nStale=0;
+  entries.forEach(e => {
+    const v = entryValue(e);
+    tv += v; tc += parseFloat(e.cost)||0;
+    const m = e.valuation_method || 'spot';
+    if (m==='spot') live += v; else if (m==='cost') atCost += v; else manual += v;
+    if (isStale(e)) nStale++;
+  });
+  document.getElementById('ptotal').textContent = '$'+f2(tv);
   const ge = document.getElementById('pgain');
-  if (tv > 0) {
-    const g=tv-tc; const s=g>=0?'+':'-';
-    ge.textContent = s+'$'+f2(Math.abs(g))+' ('+(tc>0?(g/tc*100):0).toFixed(1)+'%)';
+  if (tv > 0 && tc > 0) {
+    const g=tv-tc, s=g>=0?'+':'-';
+    ge.textContent = s+'$'+f2(Math.abs(g))+' ('+(g/tc*100).toFixed(1)+'%) vs cost';
     ge.className = 'portfolio-gain '+(g>=0?'pos':'neg');
-  } else { ge.textContent=''; }
+  } else ge.textContent='';
+
+  const chips = [
+    ['Priced live today', '$'+f2(live), false],
+    ['Your estimates', '$'+f2(manual), false],
+    ['Held at cost', '$'+f2(atCost), false],
+  ];
+  if (nStale) chips.push(['Needs revaluing', nStale+(nStale===1?' item':' items'), true]);
+  document.getElementById('bstrip').innerHTML = chips
+    .filter(c => c[1] !== '$0.00')
+    .map(c => '<div class="basis-chip'+(c[2]?' warn':'')+'"><span class="bl">'+c[0]+'</span><span class="bv">'+c[1]+'</span></div>')
+    .join('');
 }
+
 function renderTable() {
   const list = filtered();
   const tb = document.getElementById('tbody');
   document.getElementById('empty').style.display = list.length ? 'none' : 'block';
   if (!list.length) { tb.innerHTML=''; return; }
   tb.innerHTML = list.map(e => {
-    const oz = parseFloat(e.oz||0);
-    const spot = spotPrices[e.metal]||0;
-    const mult = e.metal==='copper' ? 4.5 : 1.1;
-    const rawVal = spot * oz * mult;
-    const val = isNaN(rawVal)||!isFinite(rawVal) ? 0 : rawVal;
-    const valLabel = '';
-    const g = val - parseFloat(e.cost||0);
-    const gs = val>0 ? (g>=0 ? '<span class="pos">+$'+f2(g)+'</span>' : '<span class="neg">-$'+f2(Math.abs(g))+'</span>') : '-';
-    const ppoz = oz>0 ? (parseFloat(e.cost)/oz).toFixed(2) : '-';
+    const cat = e.category || 'Precious Metals';
+    const isM = !!(catByName[cat]||{}).is_metal;
+    const val = entryValue(e);
+    const cost = parseFloat(e.cost)||0;
+    const g = val - cost;
+    const gs = (val>0 && cost>0)
+      ? (g>=0 ? '<span class="pos">+$'+f2(g)+'</span>' : '<span class="neg">-$'+f2(Math.abs(g))+'</span>')
+      : '-';
+    const qty = isM && parseFloat(e.oz)
+      ? parseFloat(e.oz).toFixed(3)+' oz'
+      : (parseFloat(e.quantity)||1).toLocaleString();
     const ph = e.photo_url
       ? '<img class="thumb" src="'+esc(e.photo_url)+'" onclick="viewImg(\''+esc(e.photo_url)+'\')" loading="lazy">'
       : '<div class="nophoto">-</div>';
-    return '<tr><td>'+ph+'</td><td>'+(e.entry_date||'-')+'</td>'
-      +'<td><span class="badge '+e.metal+'">'+e.metal+'</span></td>'
-      +'<td>'+esc(e.product||'-')+'</td>'
-      +'<td>'+parseFloat(e.oz||0).toFixed(3)+'</td>'
-      +'<td>$'+f2(e.cost)+'</td>'
-      +'<td>$'+ppoz+'</td>'
-      +'<td>'+(val>0?'$'+f2(val)+valLabel:'-')+'</td>'
-      +'<td>'+gs+'</td>'
-      +'<td>'+esc(e.dealer||'-')+'</td>'
-      +'<td><div class="acts">'
+    const metalBadge = isM && e.metal ? ' <span class="badge '+esc(e.metal)+'">'+esc(e.metal)+'</span>' : '';
+    const staleTag = isStale(e) ? '<div class="stale">&#9888; revalue</div>' : '';
+    const src = e.value_source || e.dealer || '-';
+    return '<tr><td data-label="Photo" class="'+(e.photo_url?'':'no-photo')+'">'+ph+'</td><td data-label="Date">'+(e.entry_date||'-')+'</td>'
+      +'<td data-label="Category"><span class="badge cat">'+esc(cat)+'</span>'+metalBadge+'</td>'
+      +'<td data-label="Item" class="cell-item"><div class="item-wrap">'+esc(e.product||'-')+detailSummary(e)+'</div></td>'
+      +'<td data-label="Qty">'+qty+'</td>'
+      +'<td data-label="Paid">'+(cost?'$'+f2(cost):'-')+'</td>'
+      +'<td data-label="Est. Value">'+(val>0?'$'+f2(val):'-')+'</td>'
+      +'<td data-label="Valued By"><div><div class="basis">'+basisLabel(e)+'</div>'+staleTag+'</div></td>'
+      +'<td data-label="Gain/Loss">'+gs+'</td>'
+      +'<td data-label="Source">'+esc(src)+'</td>'
+      +'<td class="acts-col"><div class="acts">'
       +'<button class="btn btn-secondary btn-sm" onclick="openEdit(\''+e.id+'\')">Edit</button>'
       +'<button class="btn btn-danger btn-sm" onclick="delEntry(\''+e.id+'\')">Del</button>'
       +'</div></td></tr>';
   }).join('');
-  // Load signed URLs for photos
+  // Swap storage paths for signed URLs
   list.filter(e=>e.photo_url && !e.photo_url.startsWith('http')).forEach(async e => {
     const { data } = await sb.storage.from('metals-photos').createSignedUrl(e.photo_url, 3600);
     if (data?.signedUrl) {
@@ -403,45 +579,115 @@ function renderTable() {
     }
   });
 }
-function setTab(m,el) { tab=m; document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); renderTable(); }
+function detailSummary(e) {
+  const d = e.details || {};
+  const parts = Object.keys(d).filter(k=>d[k]).slice(0,3).map(k=>esc(String(d[k])));
+  return parts.length ? '<div style="font-size:.72rem;color:#777">'+parts.join(' &middot; ')+'</div>' : '';
+}
+function setTab(m,el) { tab=m; document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); el.classList.add('active'); renderSummary(); renderTable(); }
 
 function viewImg(u) { document.getElementById('img-big').src=u; document.getElementById('img-modal').classList.add('open'); }
 function prevPhoto(ev) {
   const f=ev.target.files[0]; pendingPhoto=f;
   if(f){const r=new FileReader();r.onload=e=>{const i=document.getElementById('f-prev');i.src=e.target.result;i.style.display='block';};r.readAsDataURL(f);}
 }
+// Shrink in the browser before upload: a 4MB phone photo becomes ~200KB, so
+// the free 1GB of storage holds thousands of items instead of ~250.
+async function compressImage(file, maxDim=1600, quality=0.82) {
+  try {
+    if (!file.type.startsWith('image/')) return file;
+    const img = await new Promise((res,rej)=>{
+      const i=new Image(), u=URL.createObjectURL(file);
+      i.onload=()=>{URL.revokeObjectURL(u);res(i);}; i.onerror=()=>{URL.revokeObjectURL(u);rej(new Error('decode'));};
+      i.src=u;
+    });
+    const big = Math.max(img.width, img.height);
+    if (big <= maxDim && file.size < 400*1024) return file;
+    const s = Math.min(1, maxDim/big);
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.width*s); c.height = Math.round(img.height*s);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', quality));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]+$/,'')+'.jpg', { type:'image/jpeg' });
+  } catch(_) { return file; }   // HEIC or anything we can't decode: upload as-is
+}
 async function uploadPhoto(f,uid) {
-  const ext=f.name.split('.').pop();
-  const path=uid+'/'+Date.now()+'.'+ext;
-  const{error}=await sb.storage.from('metals-photos').upload(path,f,{contentType:f.type});
-  if(error)throw error;
+  const out = await compressImage(f);
+  const ext = (out.type==='image/jpeg') ? 'jpg' : (out.name.split('.').pop()||'bin');
+  const path = uid+'/'+Date.now()+'.'+ext;
+  const { error } = await sb.storage.from('metals-photos').upload(path,out,{contentType:out.type});
+  if (error) throw error;
   return path;
 }
 
+// ── Form ────────────────────────────────────────────────────────────────────
+function onCatChange() {
+  const c = catByName[document.getElementById('f-category').value] || {};
+  document.getElementById('w-metal').style.display = c.is_metal ? '' : 'none';
+  document.getElementById('w-oz').style.display    = c.is_metal ? '' : 'none';
+  document.getElementById('w-qty').style.display   = c.is_metal ? 'none' : '';
+  document.getElementById('lbl-dealer').textContent = c.is_metal ? 'Dealer' : 'Dealer / Source';
+  if (!editId) document.getElementById('f-method').value = c.valuation_method || 'appraisal';
+  renderDetailFields(c, editId ? (entries.find(x=>x.id===editId)||{}).details||{} : {});
+  onMethodChange();
+}
+function renderDetailFields(c, vals) {
+  const fs = (c && c.detail_fields) || [];
+  const box = document.getElementById('w-details');
+  if (!fs.length) { box.style.display='none'; document.getElementById('f-details').innerHTML=''; return; }
+  box.style.display='';
+  document.getElementById('details-legend').textContent = c.name + ' Details';
+  document.getElementById('f-details').innerHTML = fs.map(f =>
+    '<div class="form-group"><label>'+esc(f.label||f.key)+'</label>'
+    +'<input type="text" data-dkey="'+esc(f.key)+'" value="'+esc(vals[f.key]||'')+'"></div>'
+  ).join('');
+}
+function onMethodChange() {
+  const m = document.getElementById('f-method').value;
+  const c = catByName[document.getElementById('f-category').value] || {};
+  const spot = m === 'spot';
+  document.getElementById('w-mkt').style.display     = (spot && c.is_metal) ? '' : 'none';
+  document.getElementById('w-value').style.display   = (m==='comp'||m==='appraisal') ? '' : 'none';
+  document.getElementById('w-valdate').style.display = (m==='comp'||m==='appraisal') ? '' : 'none';
+  document.getElementById('w-valsrc').style.display  = (m==='comp'||m==='appraisal') ? '' : 'none';
+}
 function openAdd() {
   editId=null; existingPhoto=null; pendingPhoto=null;
-  document.getElementById('mtitle').textContent='Add Entry';
+  document.getElementById('mtitle').textContent='Add Item';
   document.getElementById('f-date').value=new Date().toISOString().split('T')[0];
+  document.getElementById('f-category').value = (tab!=='all' && catByName[tab]) ? tab : (cats[0]||{}).name || '';
   document.getElementById('f-metal').value='silver';
-  ['f-product','f-oz','f-cost','f-dealer','f-note'].forEach(id=>document.getElementById(id).value='');
+  ['f-product','f-oz','f-cost','f-dealer','f-note','f-value','f-valsrc','f-mktprice'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('f-qty').value='1';
+  document.getElementById('f-valdate').value=new Date().toISOString().split('T')[0];
   document.getElementById('f-photo').value='';
   document.getElementById('f-prev').style.display='none';
   document.getElementById('merr').style.display='none';
+  onCatChange();
   document.getElementById('entry-modal').classList.add('open');
 }
 function openEdit(id) {
   const e=entries.find(x=>x.id===id); if(!e) return;
   editId=id; existingPhoto=e.photo_url; pendingPhoto=null;
-  document.getElementById('mtitle').textContent='Edit Entry';
+  document.getElementById('mtitle').textContent='Edit Item';
+  document.getElementById('f-category').value=e.category||'Precious Metals';
   document.getElementById('f-date').value=e.entry_date||'';
-  document.getElementById('f-metal').value=e.metal||'silver';
   document.getElementById('f-product').value=e.product||'';
+  document.getElementById('f-metal').value=e.metal||'silver';
   document.getElementById('f-oz').value=e.oz||'';
+  document.getElementById('f-qty').value=e.quantity||1;
   document.getElementById('f-cost').value=e.cost||'';
+  document.getElementById('f-method').value=e.valuation_method||'spot';
+  document.getElementById('f-mktprice').value=e.mkt_price_per_oz||'';
+  document.getElementById('f-value').value=e.value_each||'';
+  document.getElementById('f-valdate').value=e.value_as_of||'';
+  document.getElementById('f-valsrc').value=e.value_source||'';
   document.getElementById('f-dealer').value=e.dealer||'';
   document.getElementById('f-note').value=e.note||'';
   document.getElementById('f-photo').value='';
   document.getElementById('merr').style.display='none';
+  onCatChange();
   const pi=document.getElementById('f-prev');
   if(e.photo_url){
     if(e.photo_url.startsWith('http')){pi.src=e.photo_url;pi.style.display='block';}
@@ -453,11 +699,37 @@ async function saveEntry() {
   const btn=document.getElementById('save-btn');
   const err=document.getElementById('merr');
   err.style.display='none';
-  const row={user_id:user.id,entry_date:document.getElementById('f-date').value,metal:document.getElementById('f-metal').value,product:document.getElementById('f-product').value.trim(),oz:parseFloat(document.getElementById('f-oz').value)||0,cost:parseFloat(document.getElementById('f-cost').value)||0,dealer:document.getElementById('f-dealer').value.trim(),note:document.getElementById('f-note').value.trim(),photo_url:existingPhoto||null};
-  if(!row.product){err.textContent='Product name is required.';err.style.display='block';return;}
+  const cat = document.getElementById('f-category').value;
+  const c = catByName[cat] || {};
+  const method = document.getElementById('f-method').value;
+  const details = {};
+  document.querySelectorAll('#f-details input[data-dkey]').forEach(i=>{
+    const v=i.value.trim(); if(v) details[i.dataset.dkey]=v;
+  });
+  const num = id => { const v=parseFloat(document.getElementById(id).value); return isFinite(v)?v:null; };
+  const row = {
+    user_id:user.id, category:cat,
+    entry_date:document.getElementById('f-date').value || new Date().toISOString().split('T')[0],
+    product:document.getElementById('f-product').value.trim(),
+    metal: c.is_metal ? document.getElementById('f-metal').value : null,
+    oz: c.is_metal ? (num('f-oz')||0) : null,
+    quantity: c.is_metal ? 1 : (num('f-qty')||1),
+    cost: num('f-cost'),
+    valuation_method: method,
+    mkt_price_per_oz: (method==='spot' && c.is_metal) ? num('f-mktprice') : null,
+    value_each: (method==='comp'||method==='appraisal') ? num('f-value') : null,
+    value_as_of: (method==='comp'||method==='appraisal') ? (document.getElementById('f-valdate').value||null) : null,
+    value_source: (method==='comp'||method==='appraisal') ? document.getElementById('f-valsrc').value.trim() : null,
+    details, dealer:document.getElementById('f-dealer').value.trim(),
+    note:document.getElementById('f-note').value.trim(),
+    photo_url:existingPhoto||null
+  };
+  if(!row.product){err.textContent='Item name is required.';err.style.display='block';return;}
+  if(method==='spot' && !c.is_metal){err.textContent='Live spot pricing only works for metals. Pick another valuation method.';err.style.display='block';return;}
+  if((method==='comp'||method==='appraisal') && !row.value_each){err.textContent='Enter an estimated value per unit, or change how this item is valued.';err.style.display='block';return;}
   btn.disabled=true; btn.textContent='Saving...';
   try {
-    if(pendingPhoto) row.photo_url=await uploadPhoto(pendingPhoto,user.id);
+    if(pendingPhoto){btn.textContent='Uploading photo...';row.photo_url=await uploadPhoto(pendingPhoto,user.id);btn.textContent='Saving...';}
     if(editId){const{error}=await sb.from('metals_entries').update(row).eq('id',editId).eq('user_id',user.id);if(error)throw error;}
     else{const{error}=await sb.from('metals_entries').insert(row);if(error)throw error;}
     closeModal('entry-modal'); await loadEntries();
@@ -465,11 +737,33 @@ async function saveEntry() {
   btn.disabled=false; btn.textContent='Save';
 }
 async function delEntry(id) {
-  if(!confirm('Delete this entry?'))return;
+  if(!confirm('Delete this item?'))return;
   const{error}=await sb.from('metals_entries').delete().eq('id',id).eq('user_id',user.id);
   if(!error) await loadEntries();
 }
 
+// ── CSV export: a schedule of assets for insurance or estate records ────────
+function exportCsv() {
+  const cols = ['category','entry_date','product','metal','oz','quantity','cost',
+                'valuation_method','mkt_price_per_oz','value_each','value_as_of',
+                'value_source','dealer','note'];
+  const head = cols.concat(['est_value','details']);
+  const rows = entries.map(e => {
+    const vals = cols.map(k => e[k]==null ? '' : String(e[k]));
+    vals.push(entryValue(e).toFixed(2));
+    vals.push(Object.entries(e.details||{}).map(([k,v])=>k+'='+v).join('; '));
+    return vals;
+  });
+  const csv = [head].concat(rows)
+    .map(r => r.map(v => '"'+String(v).replace(/"/g,'""')+'"').join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'}));
+  a.download = 'assets-'+new Date().toISOString().split('T')[0]+'.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+}
+
+// ── Invoice import (bullion line items) ─────────────────────────────────────
 let invMode = 'text';
 function setInvTab(mode) {
   invMode = mode;
@@ -498,47 +792,44 @@ function invBack(){document.getElementById('inv-s1').style.display='block';docum
 async function parseInv() {
   const btn=document.getElementById('parse-btn');
   const err=document.getElementById('inv-err');
-  err.style.display='none'; btn.disabled=true; btn.textContent='Parsing...';
+  err.style.display='none'; btn.disabled=true; btn.textContent='Working...';
   try {
     const sess=await sb.auth.getSession();
-    const tok=sess.data.session?.access_token||SB_KEY;
+    const tok=sess.data.session?.access_token;
+    if(!tok) throw new Error('Session expired — sign in again.');
+    let text;
     if (invMode === 'pdf') {
       const file = document.getElementById('inv-pdf').files[0];
       if (!file) throw new Error('Please select a PDF file first.');
-      // Extract text from PDF using PDF.js
       btn.textContent = 'Reading PDF...';
       const arrayBuffer = await file.arrayBuffer();
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let pdfText = '';
+      text = '';
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
-        pdfText += content.items.map(item => item.str).join(' ') + '\n';
+        text += content.items.map(item => item.str).join(' ') + '\n';
       }
-      if (!pdfText.trim()) throw new Error('Could not extract text from PDF. It may be a scanned image.');
-      btn.textContent = 'Parsing...';
-      const r=await fetch(FN_URL+'?action=parse-invoice',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:JSON.stringify({text:pdfText})});
-      const d=await r.json();
-      if(d.error) throw new Error('API error: ' + d.error);
-      if(!d.items||!d.items.length) throw new Error('No precious metals items found in this PDF.');
-      invItems=d.items; renderInvItems();
+      if (!text.trim()) throw new Error('Could not extract text from PDF. It may be a scanned image.');
     } else {
-      const text=document.getElementById('inv-text').value.trim();
+      text = document.getElementById('inv-text').value.trim();
       if(!text) throw new Error('Paste invoice text first.');
-      const r=await fetch(FN_URL+'?action=parse-invoice',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:JSON.stringify({text})});
-      const d=await r.json();
-      if(!d.items||!d.items.length) throw new Error('No items extracted. Make sure the product lines are included, not just the column headers.');
-      invItems=d.items; renderInvItems();
     }
+    btn.textContent = 'Extracting...';
+    const r=await fetch(FN_URL+'?action=parse-invoice',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:JSON.stringify({text})});
+    const d=await r.json();
+    if(d.error) throw new Error(d.error);
+    if(!d.items||!d.items.length) throw new Error('No items found. Make sure the product lines are included, not just the column headers.');
+    invItems=d.items; renderInvItems();
     document.getElementById('inv-s1').style.display='none';
     document.getElementById('inv-s2').style.display='block';
   } catch(e){err.textContent=e.message;err.style.display='block';}
-  btn.disabled=false; btn.textContent='Parse with AI';
+  btn.disabled=false; btn.textContent='Extract Items';
 }
 function renderInvItems() {
   const rows=invItems.map((item,i)=>{
-    const opts=['gold','silver','copper','platinum','palladium'].map(m=>'<option value="'+m+'"'+(item.metal===m?' selected':'')+'>'+m+'</option>').join('');
+    const opts=METALS.map(m=>'<option value="'+m+'"'+(item.metal===m?' selected':'')+'>'+m+'</option>').join('');
     return '<tr><td>'+(i+1)+'</td>'
       +'<td><input type="date" value="'+(item.entry_date||'')+'" onchange="invItems['+i+'].entry_date=this.value"></td>'
       +'<td><select onchange="invItems['+i+'].metal=this.value">'+opts+'</select></td>'
@@ -555,7 +846,14 @@ async function saveInv() {
   const err=document.getElementById('inv-err');
   err.style.display='none'; btn.disabled=true; btn.textContent='Saving...';
   try {
-    const rows=invItems.map(item=>({user_id:user.id,entry_date:item.entry_date||new Date().toISOString().split('T')[0],metal:item.metal||'silver',product:item.product||'',oz:parseFloat(item.oz)||0,cost:parseFloat(item.cost)||0,dealer:item.dealer||'',note:'',photo_url:null}));
+    const rows=invItems.map(item=>({
+      user_id:user.id, category:'Precious Metals', valuation_method:'spot',
+      entry_date:item.entry_date||new Date().toISOString().split('T')[0],
+      metal:item.metal||'silver', product:item.product||'',
+      oz:parseFloat(item.oz)||0, quantity:1,
+      cost:parseFloat(item.cost)||0, dealer:item.dealer||'',
+      note:'', details:{}, photo_url:null
+    }));
     const{error}=await sb.from('metals_entries').insert(rows);
     if(error)throw error;
     closeModal('inv-modal'); await loadEntries();
@@ -565,7 +863,7 @@ async function saveInv() {
 
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 function f2(n){return parseFloat(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
-function esc(s){return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function esc(s){return(s==null?'':String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 document.querySelectorAll('.modal-overlay').forEach(o=>o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');}));
 document.getElementById('l-pass').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
 init();
