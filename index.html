@@ -71,6 +71,14 @@ header{background:var(--surface);border-bottom:1px solid var(--border);padding:1
 .card.c4::before{background:var(--copper)}
 .card.c5::before{background:#d47fa8}
 .card h3{font-size:.72rem;text-transform:uppercase;color:#888;margin-bottom:10px}
+/* The metals roll-up opens the per-metal cards, so it has to look pressable */
+.card.rollup{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.card.rollup:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.card.rollup h3{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.card.rollup .chev{font-size:1rem;line-height:1;color:var(--gold);
+   transition:transform .15s ease;display:inline-block}
+.card.rollup.open .chev{transform:rotate(90deg)}
+.rollup-hint{margin-top:9px;font-size:.68rem;color:#777}
 .card .oz{font-size:1.3rem;font-weight:700}
 .card .oz span{font-size:.72rem;color:#888}
 .stat{display:flex;justify-content:space-between;margin-top:5px;font-size:.8rem;gap:8px}
@@ -624,13 +632,44 @@ function metalCard(m, me) {
       const cost = me.reduce((s,e)=>s+(parseFloat(e.cost)||0),0);
       const val = me.reduce((s,e)=>s+entryValue(e),0);
       const g = val-cost, gc = g>=0?'pos':'neg', gs = g>=0?'+':'-';
-      const pct = cost>0 ? (g/cost*100).toFixed(1) : '0.0';
+      const pct = cost>0 ? Math.abs(g/cost*100).toFixed(1) : '0.0';
       let h = '<div class="card '+m+'"><h3>'+m+'</h3><div class="oz">'+oz.toFixed(3)+' <span>troy oz</span></div>';
       if (spotPrices[m]) h += '<div class="stat"><label>Spot</label><span>$'+f2(spotPrices[m])+'/oz</span></div>';
       h += '<div class="stat"><label>Est. Value</label><span>$'+f2(val)+'</span></div>';
       h += '<div class="stat"><label>Cost Basis</label><span>$'+f2(cost)+'</span></div>';
       if (val>0 && cost>0) h += '<div class="stat"><label>Gain/Loss</label><span class="'+gc+'">'+gs+'$'+f2(Math.abs(g))+' ('+gs+pct+'%)</span></div>';
       return h + '</div>';
+}
+
+// One card standing in for every metal held. The per-metal cards are a level
+// of detail you want on demand, not five boxes to scroll past on a phone.
+function metalsRollupCard(me) {
+      if (!me.length) return '';
+      const cost = me.reduce((s,e)=>s+(parseFloat(e.cost)||0),0);
+      const val = me.reduce((s,e)=>s+entryValue(e),0);
+      const g = val-cost, gc = g>=0?'pos':'neg', gs = g>=0?'+':'-';
+      const pct = cost>0 ? Math.abs(g/cost*100).toFixed(1) : '0.0';
+      const held = METALS.filter(m => me.some(e => e.metal===m));
+      let h = '<div class="card gold rollup'+(metalsOpen?' open':'')+'" onclick="toggleMetals()"'
+        + ' role="button" tabindex="0" aria-expanded="'+(metalsOpen?'true':'false')+'"'
+        + ' onkeydown="if(event.key===\'Enter\'||event.key===\' \'){event.preventDefault();toggleMetals()}">'
+        + '<h3>Precious Metals<span class="chev">›</span></h3>';
+      h += '<div class="oz">$'+f2(val)+' <span>est. value</span></div>';
+      h += '<div class="stat"><label>Metals</label><span>'+held.length+'</span></div>';
+      h += '<div class="stat"><label>Cost Basis</label><span>$'+f2(cost)+'</span></div>';
+      if (val>0 && cost>0) h += '<div class="stat"><label>Gain/Loss</label><span class="'+gc+'">'+gs+'$'+f2(Math.abs(g))+' ('+gs+pct+'%)</span></div>';
+      h += '<div class="rollup-hint">'+(metalsOpen?'Tap to hide':'Tap for gold, silver, copper…')+'</div>';
+      return h + '</div>';
+}
+
+// Collapsed per-metal breakdown. The roll-up card above is the default view.
+let metalsOpen = false;
+function toggleMetals() { metalsOpen = !metalsOpen; renderSummary(); }
+
+// Roll-up first, then the per-metal cards when it is open.
+function metalSection(me) {
+      return metalsRollupCard(me)
+        + (metalsOpen ? METALS.map(m => metalCard(m, me.filter(e => e.metal===m))).join('') : '');
 }
 
 function categoryCard(c, i, ce) {
@@ -663,18 +702,14 @@ function renderSummary() {
     // "All" used to show one card per category, which says nothing when every
     // item sits in the same one. Splitting bullion by metal is the breakdown
     // that carries information.
-    const metalCards = METALS
-      .map(m => metalCard(m, entries.filter(e => bySpot(e) && e.metal===m)))
-      .join('');
+    const metalCards = metalSection(entries.filter(bySpot));
     const otherCards = cats
       .map((c,i) => categoryCard(c, i, entries.filter(e => catOf(e)===c.name && !bySpot(e))))
       .join('');
     sg.innerHTML = metalCards + otherCards;
   } else if (isMetalCat(tab)) {
     const inTab = entries.filter(e => catOf(e)===tab);
-    sg.innerHTML = METALS
-      .map(m => metalCard(m, inTab.filter(e => bySpot(e) && e.metal===m)))
-      .join('')
+    sg.innerHTML = metalSection(inTab.filter(bySpot))
       + (cats.filter(c=>c.name===tab)
           .map((c,i) => categoryCard(c, i, inTab.filter(e => !bySpot(e)))).join(''));
   } else {
