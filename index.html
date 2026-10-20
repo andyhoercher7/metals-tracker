@@ -260,6 +260,7 @@ td[data-label="Date"]{white-space:nowrap}
       <button class="btn btn-secondary btn-sm" id="ref-btn" onclick="refreshPrices()">&#8635; Refresh Prices</button>
       <button class="btn btn-secondary btn-sm" onclick="openPremiums()">&#9878; Premiums</button>
       <button class="btn btn-secondary btn-sm" onclick="exportCsv()">&#8681; CSV</button>
+      <button class="btn btn-secondary btn-sm" id="opt-btn" onclick="optimizeAllPhotos()">&#9881; Shrink Photos</button>
       <button class="btn btn-secondary btn-sm" onclick="window.print()">&#128424; Print</button>
       <button class="btn btn-secondary btn-sm" onclick="doLogout()">Sign Out</button>
     </div>
@@ -775,7 +776,9 @@ function renderTable() {
       ? fmtQty(e.oz)+' oz'
       : fmtQty(e.quantity||1);
     const ph = e.photo_url
-      ? '<img class="thumb" src="'+esc(e.photo_url)+'" onclick="event.stopPropagation();viewImg(\''+esc(e.photo_url)+'\')" loading="lazy">'
+      ? (e.photo_url.startsWith('http')
+          ? '<img class="thumb" src="'+esc(e.photo_url)+'" onclick="event.stopPropagation();viewImg(\''+esc(e.photo_url)+'\')" loading="lazy">'
+          : '<img class="thumb" alt="" data-path="'+esc(e.photo_url)+'" loading="lazy">')
       : '<div class="nophoto">-</div>';
     // The metal badge rides with the item name so it survives the collapsed
     // phone row; the category badge is dropped when every item shares one.
@@ -801,16 +804,8 @@ function renderTable() {
   }).join('');
   markSortedHeader();
 
-  // Swap storage paths for signed URLs
-  list.filter(e=>e.photo_url && !e.photo_url.startsWith('http')).forEach(async e => {
-    const { data } = await sb.storage.from('metals-photos').createSignedUrl(e.photo_url, 3600);
-    if (data?.signedUrl) {
-      document.querySelectorAll('img.thumb[src="'+esc(e.photo_url)+'"]').forEach(img => {
-        img.src = data.signedUrl;
-        img.onclick = () => viewImg(data.signedUrl);
-      });
-    }
-  });
+  // Draw each row's 48px thumbnail, never the full photo
+  list.filter(e=>e.photo_url && !e.photo_url.startsWith('http')).forEach(e => showThumb(e.photo_url));
 }
 function detailSummary(e) {
   const d = e.details || {};
@@ -824,9 +819,102 @@ function prevPhoto(ev) {
   const f=ev.target.files[0]; pendingPhoto=f;
   if(f){const r=new FileReader();r.onload=e=>{const i=document.getElementById('f-prev');i.src=e.target.result;i.style.display='block';};r.readAsDataURL(f);}
 }
+// ── Photos ──────────────────────────────────────────────────────────────────
+// The list shows 48px thumbnails, so it must never download the full photo:
+// 76 full-size images is ~125MB of egress on every page open, which is what
+// pushed the Supabase org past its bandwidth quota. Every upload now stores a
+// small companion image under <uid>/thumbs/, and signed URLs are cached so a
+// reload reuses the same URL and hits the browser cache instead of Supabase.
+const THUMB_DIR = 'thumbs';
+const URL_TTL   = 7*24*3600;          // signed-URL lifetime, seconds
+const URL_REUSE = 6*24*3600*1000;     // how long we reuse a cached URL, ms
+const FOREVER   = '31536000';         // cacheControl for immutable photos
+
+function thumbPath(p) {
+  const i = p.lastIndexOf('/');
+  const dir = i<0 ? '' : p.slice(0,i+1);
+  const base = (i<0 ? p : p.slice(i+1)).replace(/\.[^.]+$/,'');
+  return dir + THUMB_DIR + '/' + base + '.jpg';
+}
+// Reusing the URL is the point: a fresh signature every render means a fresh
+// URL, which means the browser cache never hits and every photo is paid for
+// again.
+async function signedUrl(path) {
+  const key = 'sig:'+path;
+  try {
+    const hit = JSON.parse(localStorage.getItem(key)||'null');
+    if (hit && hit.exp > Date.now()) return hit.url;
+  } catch(_) {}
+  const { data } = await sb.storage.from('metals-photos').createSignedUrl(path, URL_TTL);
+  if (!data?.signedUrl) return null;
+  try { localStorage.setItem(key, JSON.stringify({url:data.signedUrl, exp:Date.now()+URL_REUSE})); } catch(_) {}
+  return data.signedUrl;
+}
+async function showThumb(path) {
+  const sel = 'img.thumb[data-path="'+path.replace(/"/g,'\\"')+'"]';
+  const apply = url => document.querySelectorAll(sel).forEach(img => {
+    img.src = url;
+    img.onclick = ev => { ev.stopPropagation(); openPhoto(path); };
+  });
+  const turl = await signedUrl(thumbPath(path));
+  if (!turl) return;
+  const probe = new Image();
+  probe.onload  = () => apply(turl);
+  probe.onerror = () => backfillThumb(path).then(u => { if (u) apply(u); });
+  probe.src = turl;
+}
+// Tapping a thumbnail is the only thing that downloads the full photo.
+async function openPhoto(path) {
+  const u = await signedUrl(path);
+  if (u) viewImg(u);
+}
+// A photo uploaded before thumbnails existed has none. Download the full image
+// once, write the thumbnail, and shrink the original in place if it was
+// uploaded before browser-side compression existed - several are 3MB+. Every
+// view after this one is cheap.
+async function backfillThumb(path) {
+  try {
+    const full = await signedUrl(path);
+    if (!full) return null;
+    const blob = await (await fetch(full)).blob();
+    const file = new File([blob],'p.jpg',{type:blob.type||'image/jpeg'});
+    const tp = thumbPath(path);
+    const small = await compressImage(file, 256, 0.7, true);
+    const { error } = await sb.storage.from('metals-photos')
+      .upload(tp, small, { contentType:'image/jpeg', cacheControl:FOREVER, upsert:true });
+    if (error) return null;
+    try { localStorage.removeItem('sig:'+tp); } catch(_) {}
+    if (file.size > 400*1024) {
+      const lean = await compressImage(file);
+      if (lean.size < file.size) {
+        await sb.storage.from('metals-photos')
+          .upload(path, lean, { contentType:'image/jpeg', cacheControl:FOREVER, upsert:true });
+      }
+    }
+    return await signedUrl(tp);
+  } catch(_) { return null; }
+}
+// One-time pass over every stored photo, for the ones already uploaded before
+// any of this existed. Safe to run again: a photo that is already small and
+// already has a thumbnail costs one download and no upload.
+async function optimizeAllPhotos() {
+  const btn = document.getElementById('opt-btn');
+  const paths = [...new Set(entries.filter(e=>e.photo_url && !e.photo_url.startsWith('http')).map(e=>e.photo_url))];
+  if (!paths.length) { alert('No stored photos to shrink.'); return; }
+  if (!confirm('Rebuild thumbnails and shrink '+paths.length+' stored photos? This downloads each one once and can take a few minutes.')) return;
+  btn.disabled = true;
+  for (let i=0; i<paths.length; i++) {
+    btn.textContent = 'Shrinking '+(i+1)+'/'+paths.length;
+    await backfillThumb(paths[i]);
+  }
+  btn.disabled = false; btn.textContent = '\u2699 Shrink Photos';
+  renderTable();
+  alert('Done. '+paths.length+' photos processed.');
+}
 // Shrink in the browser before upload: a 4MB phone photo becomes ~200KB, so
 // the free 1GB of storage holds thousands of items instead of ~250.
-async function compressImage(file, maxDim=1600, quality=0.82) {
+// force skips the "already small enough" shortcuts, for thumbnails.
+async function compressImage(file, maxDim=1600, quality=0.82, force=false) {
   try {
     if (!file.type.startsWith('image/')) return file;
     const img = await new Promise((res,rej)=>{
@@ -835,13 +923,13 @@ async function compressImage(file, maxDim=1600, quality=0.82) {
       i.src=u;
     });
     const big = Math.max(img.width, img.height);
-    if (big <= maxDim && file.size < 400*1024) return file;
+    if (!force && big <= maxDim && file.size < 400*1024) return file;
     const s = Math.min(1, maxDim/big);
     const c = document.createElement('canvas');
     c.width = Math.round(img.width*s); c.height = Math.round(img.height*s);
     c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
     const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', quality));
-    if (!blob || blob.size >= file.size) return file;
+    if (!blob || (!force && blob.size >= file.size)) return file;
     return new File([blob], file.name.replace(/\.[^.]+$/,'')+'.jpg', { type:'image/jpeg' });
   } catch(_) { return file; }   // HEIC or anything we can't decode: upload as-is
 }
@@ -849,8 +937,13 @@ async function uploadPhoto(f,uid) {
   const out = await compressImage(f);
   const ext = (out.type==='image/jpeg') ? 'jpg' : (out.name.split('.').pop()||'bin');
   const path = uid+'/'+Date.now()+'.'+ext;
-  const { error } = await sb.storage.from('metals-photos').upload(path,out,{contentType:out.type});
+  const { error } = await sb.storage.from('metals-photos').upload(path,out,{contentType:out.type,cacheControl:FOREVER});
   if (error) throw error;
+  try {
+    const t = await compressImage(out, 256, 0.7, true);
+    await sb.storage.from('metals-photos')
+      .upload(thumbPath(path), t, {contentType:'image/jpeg', cacheControl:FOREVER, upsert:true});
+  } catch(_) {}   // a missing thumbnail is rebuilt the first time the row is drawn
   return path;
 }
 
@@ -924,7 +1017,7 @@ function openEdit(id) {
   const pi=document.getElementById('f-prev');
   if(e.photo_url){
     if(e.photo_url.startsWith('http')){pi.src=e.photo_url;pi.style.display='block';}
-    else{sb.storage.from('metals-photos').createSignedUrl(e.photo_url,3600).then(({data})=>{if(data?.signedUrl){pi.src=data.signedUrl;pi.style.display='block';}});}
+    else{signedUrl(e.photo_url).then(u=>{if(u){pi.src=u;pi.style.display='block';}});}
   } else { pi.style.display='none'; }
   document.getElementById('entry-modal').classList.add('open');
 }
